@@ -1,0 +1,286 @@
+// Package model is the Bubble Tea state: chat history, transcript entries,
+// spinner, viewport, textarea. Both the app (controller) and ui (renderer)
+// packages depend on it to avoid an import cycle.
+package model
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+
+	"little-golem/src/llama"
+	"little-golem/src/tools"
+)
+
+// EntryKind tags a transcript line with who wrote it.
+type EntryKind int
+
+const (
+	EntryUser EntryKind = iota
+	EntryAssistant
+	EntryTool
+)
+
+// Entry is one rendered line of chat history. Assistant entries may carry
+// a separate reasoning (thinking) trace and timing metadata.
+type Entry struct {
+	Kind      EntryKind
+	Content   string // assistant text, or a tool's raw result
+	Tool      string // tool entries: tool name
+	Cmd       string // tool entries: command or query the model passed
+	CallID    string // tool entries: matches PendingCall.CallIndex while running
+	Reasoning string
+	Streaming bool
+
+	Started  time.Time
+	ThinkEnd time.Time // when the first content token arrived
+	Ended    time.Time
+}
+
+// ThinkDuration reports how long the reasoning phase lasted.
+func (e Entry) ThinkDuration() time.Duration {
+	end := e.ThinkEnd
+	if end.IsZero() {
+		end = e.Ended
+	}
+	if end.IsZero() || e.Started.IsZero() {
+		return 0
+	}
+	return end.Sub(e.Started)
+}
+
+// Duration reports total time from send to stream completion.
+func (e Entry) Duration() time.Duration {
+	if e.Ended.IsZero() || e.Started.IsZero() {
+		return 0
+	}
+	return e.Ended.Sub(e.Started)
+}
+
+// FmtDur renders durations like opencode: 4s, 1m12s.
+func FmtDur(d time.Duration) string {
+	s := int(d.Round(time.Second).Seconds())
+	switch {
+	case s < 1:
+		return "<1s"
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	default:
+		return fmt.Sprintf("%dm%ds", s/60, s%60)
+	}
+}
+
+// FmtTokens renders token counts like opencode: 840, 12.4K, 1.2M.
+func FmtTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
+	}
+}
+
+// App is the root Bubble Tea model state shared across packages.
+type App struct {
+	Server *llama.Server
+
+	Width, Height int
+	Ready         bool
+	Busy          bool
+
+	Viewport viewport.Model
+	Input    textarea.Model
+	Spinner  spinner.Model
+
+	Entries []Entry
+	History []llama.ChatMessage
+
+	EventsChan chan llama.StreamEvent
+	Cancel     context.CancelFunc
+
+	Tools   *tools.Registry
+	ToolAcc map[int]*toolAcc // streamed tool_call index -> accumulator
+
+	// Pending holds tool calls waiting to run. Calls to tools that need
+	// approval (bash) pause here until the user answers y/n in keys.go.
+	Pending []PendingCall
+	// Current is the call awaiting user confirmation, if any.
+	Current *PendingCall
+	// ApprovalSel is the highlighted Approvals row; Reasoning is true while
+	// the user types a denial reason into Reason.
+	ApprovalSel int
+	Reasoning   bool
+	Reason      textinput.Model
+	// Bypass runs approval-gated tools (bash) without asking.
+	Bypass bool
+	// Approved commands auto-run for the rest of the session after the
+	// user answers y once; Denied commands auto-skip after n.
+	Approved map[string]bool
+	Denied   map[string]bool
+
+	ShowThinking bool // opencode "thinking" mode: hidden by default
+	ShowTools    bool // show full tool output instead of a short preview
+
+	// Follow keeps the viewport glued to the latest output. It is set
+	// on new turns and cleared when the user scrolls up, mirroring
+	// opencode's AtBottom-gated auto-scroll.
+	Follow bool
+	// TokenUsed is the last reported prompt+completion token count, i.e.
+	// the context currently in use.
+	TokenUsed int
+
+	// Per-turn activity shown above the input. A turn spans the user's
+	// message through the final answer, including tool rounds.
+	TurnStart time.Time
+	VerbSeed  int    // starting index into config.Verbs for this turn
+	Frame     int    // animation frame, advanced by the spinner tick
+	TurnDone  int    // completion tokens of finished requests this turn
+	ReqTokens int    // streamed chunks of the in-flight request (estimate)
+	Rounds    int    // model->tools round trips this turn
+	Running   string // name of the tool currently executing, if any
+	Cancelled bool   // the user interrupted the current turn
+
+	Err    error
+	Notice string
+
+	// ConfirmQuit is set when the second ctrl+c has armed a pending quit;
+	// the next ctrl+c actually quits. The transient banner comes from
+	// ConfirmQuitNotice, which is cleared by any other keypress.
+	ConfirmQuit       bool
+	ConfirmQuitNotice string
+}
+
+// Decision is the user's answer to a bash approval prompt.
+type Decision int
+
+const (
+	AllowOnce Decision = iota
+	AllowSession
+	Deny
+	DenyReason
+)
+
+// Approval is one selectable row of the approval card.
+type Approval struct {
+	Label string
+	Key   string // hotkey
+	Do    Decision
+}
+
+// Approvals lists the approval choices in display order.
+var Approvals = []Approval{
+	{"Allow once", "y", AllowOnce},
+	{"Allow for session", "a", AllowSession},
+	{"Deny", "n", Deny},
+	{"Deny with reason…", "r", DenyReason},
+}
+
+// MaxRounds caps model->tools round trips per user turn so a small model
+// cannot loop on tool calls forever.
+const MaxRounds = 12
+
+// Working reports whether the agent is mid-turn: streaming, waiting for
+// tool approval, or executing a tool.
+func (m *App) Working() bool {
+	return m.Busy || m.Current != nil || m.Running != ""
+}
+
+// TurnTokens is the running completion-token count for the current turn.
+func (m *App) TurnTokens() int { return m.TurnDone + m.ReqTokens }
+
+// BeginToolAcc returns the accumulator for streamed tool call index i,
+// creating it on first use.
+func (m *App) BeginToolAcc(i int) *toolAcc {
+	if m.ToolAcc == nil {
+		m.ToolAcc = map[int]*toolAcc{}
+	}
+	acc, ok := m.ToolAcc[i]
+	if !ok {
+		acc = &toolAcc{}
+		m.ToolAcc[i] = acc
+	}
+	return acc
+}
+
+// toolAcc assembles one streamed tool call from fragments.
+type toolAcc struct {
+	ID       string
+	Name     string
+	argsBuf  strings.Builder
+	complete bool
+}
+
+// PendingCall is one assembled tool call waiting to run.
+type PendingCall struct {
+	Name      string
+	Arguments string
+	CallIndex string // streamed index string; used for the call_ ID
+}
+
+// Summary is what the call is about, for display: the bash command, the
+// search query, or the raw arguments when neither parses.
+func (p PendingCall) Summary() string {
+	var a struct {
+		Command string `json:"command"`
+		Query   string `json:"query"`
+	}
+	if json.Unmarshal([]byte(p.Arguments), &a) == nil {
+		if a.Command != "" {
+			return a.Command
+		}
+		if a.Query != "" {
+			return a.Query
+		}
+	}
+	return strings.TrimSpace(p.Arguments)
+}
+
+// Index returns the numeric streamed index, or 0 when unknown.
+func (p PendingCall) Index() int {
+	n, _ := strconv.Atoi(p.CallIndex)
+	return n
+}
+
+// Command returns the bash command carried in the arguments JSON, falling
+// back to the raw arguments when parsing fails.
+func (p PendingCall) Command() string {
+	var a struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal([]byte(p.Arguments), &a); err == nil && a.Command != "" {
+		return a.Command
+	}
+	return p.Arguments
+}
+
+// Args returns the accumulated JSON arguments string.
+func (a *toolAcc) Args() string { return a.argsBuf.String() }
+
+// ID returns the accumulated tool call id.
+func (a *toolAcc) IDValue() string { return a.ID }
+
+// Accumulate apps one delta fragment.
+func (a *toolAcc) Accumulate(name, args string) {
+	if name != "" && a.Name == "" {
+		a.Name = name
+	}
+	a.argsBuf.WriteString(args)
+}
+
+// CancelType indicates how a tool accumulation finished.
+type toolFinish int
+
+const (
+	toolFinishNone toolFinish = iota
+	toolFinishArgsReady
+)

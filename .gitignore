@@ -1,0 +1,6 @@
+little-golem
+*.log
+model/*
+!model/README.md
+llama-server-setup/*
+!llama-server-setup/README.md

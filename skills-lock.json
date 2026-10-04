@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "bubbletea-v2": {
+      "source": "rigerc/bubbletea-v2-scaffold",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/bubbletea-v2/SKILL.md",
+      "computedHash": "dcf9fb33889d7519d54218a6f2076bc4c78759840ab271119b3859a865c8b342"
+    }
+  }
+}
