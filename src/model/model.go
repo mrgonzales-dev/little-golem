@@ -39,6 +39,7 @@ type Entry struct {
 	CallID    string // tool entries: matches PendingCall.CallIndex while running
 	Reasoning string
 	Streaming bool
+	Draft     bool // tool entries: the model is still writing the call
 
 	Started  time.Time
 	ThinkEnd time.Time // when the first content token arrived
@@ -243,6 +244,68 @@ func (p PendingCall) Summary() string {
 		}
 	}
 	return strings.TrimSpace(p.Arguments)
+}
+
+// PartialSummary is Summary for a call whose arguments are still
+// streaming: it pulls the "command" or "query" string out of incomplete
+// JSON, so the text can be shown as the model writes it.
+func PartialSummary(args string) string {
+	for _, key := range []string{"command", "query"} {
+		if s, ok := partialJSONString(args, key); ok {
+			return s
+		}
+	}
+	return strings.TrimSpace(args)
+}
+
+// partialJSONString decodes the string value of key from possibly
+// truncated JSON, stopping at the closing quote or the end of input.
+func partialJSONString(s, key string) (string, bool) {
+	i := strings.Index(s, `"`+key+`"`)
+	if i < 0 {
+		return "", false
+	}
+	s = strings.TrimLeft(s[i+len(key)+2:], " \t\r\n")
+	if !strings.HasPrefix(s, ":") {
+		return "", false
+	}
+	s = strings.TrimLeft(s[1:], " \t\r\n")
+	if !strings.HasPrefix(s, `"`) {
+		return "", false
+	}
+	var b strings.Builder
+	rs := []rune(s[1:])
+	for j := 0; j < len(rs); j++ {
+		switch c := rs[j]; c {
+		case '"':
+			return b.String(), true
+		case '\\':
+			if j+1 >= len(rs) {
+				return b.String(), true
+			}
+			j++
+			switch e := rs[j]; e {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+			case 'u':
+				if j+4 >= len(rs) {
+					return b.String(), true
+				}
+				if n, err := strconv.ParseUint(string(rs[j+1:j+5]), 16, 32); err == nil {
+					b.WriteRune(rune(n))
+				}
+				j += 4
+			default:
+				b.WriteRune(e)
+			}
+		default:
+			b.WriteRune(c)
+		}
+	}
+	return b.String(), true
 }
 
 // Index returns the numeric streamed index, or 0 when unknown.

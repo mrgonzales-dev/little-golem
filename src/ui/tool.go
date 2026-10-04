@@ -53,7 +53,11 @@ func RenderTool(b *strings.Builder, e model.Entry, w int, expand bool) {
 	cmdW := max(10, w-len(e.Tool)-6)
 	cmd := strings.Split(lipgloss.Wrap(e.Cmd, cmdW, ""), "\n")
 	if len(cmd) > toolMaxCmdLines && !expand {
-		cmd = append(cmd[:toolMaxCmdLines-1], "…")
+		if e.Draft {
+			cmd = append([]string{"…"}, cmd[len(cmd)-toolMaxCmdLines+1:]...)
+		} else {
+			cmd = append(cmd[:toolMaxCmdLines-1], "…")
+		}
 	}
 	name := UIGlyphStyle.Bold(true).Render(e.Tool)
 	sep := UIToolStyle.Render(": ")
@@ -65,7 +69,11 @@ func RenderTool(b *strings.Builder, e model.Entry, w int, expand bool) {
 		}
 	}
 	if e.Streaming {
-		b.WriteString(UIHintStyle.Render("  running"))
+		hint := "  running"
+		if e.Draft {
+			hint = "  writing"
+		}
+		b.WriteString(UIHintStyle.Render(hint))
 		return
 	}
 	if out == "" {

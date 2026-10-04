@@ -67,7 +67,7 @@ func AppendDelta(m *model.App, reasoning, content string, tool *llama.ToolDelta)
 		acc := m.BeginToolAcc(tool.Index)
 		acc.Accumulate(tool.Name, tool.Args)
 	}
-	if reasoning != "" || content != "" {
+	if reasoning != "" || content != "" || tool != nil {
 		ui.RenderEntries(m)
 	}
 }

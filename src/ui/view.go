@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -81,6 +82,23 @@ func RenderEntries(m *model.App) {
 			RenderTool(&b, e, w, m.ShowTools)
 			b.WriteString("\n\n")
 		}
+	}
+
+	// Tool calls the model is still writing: shown live, not stored.
+	idxs := make([]int, 0, len(m.ToolAcc))
+	for i, acc := range m.ToolAcc {
+		if acc.Name != "" {
+			idxs = append(idxs, i)
+		}
+	}
+	sort.Ints(idxs)
+	for _, i := range idxs {
+		acc := m.ToolAcc[i]
+		RenderTool(&b, model.Entry{
+			Kind: model.EntryTool, Tool: acc.Name, Cmd: model.PartialSummary(acc.Args()),
+			Streaming: true, Draft: true,
+		}, w, m.ShowTools)
+		b.WriteString("\n\n")
 	}
 
 	// Paint the entire viewport body in one pass: Width pads every line
