@@ -58,9 +58,9 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+o":
 		m.ShowThinking = !m.ShowThinking
 		if m.ShowThinking {
-			m.Notice = "thinking shown"
+			m.Notice = "thinking streams live (ctrl+o to hide)"
 		} else {
-			m.Notice = "thinking hidden"
+			m.Notice = "thinking hidden (ctrl+o to show)"
 		}
 		ui.RenderEntries(m)
 		return nil, true

@@ -21,6 +21,17 @@ func Verb(m *model.App) string {
 	return "Golem " + config.VerbAt(m.VerbSeed, time.Since(m.TurnStart))
 }
 
+// thinkingNow reports whether the latest reply is still in its reasoning
+// phase with some reasoning text already streamed.
+func thinkingNow(m *model.App) bool {
+	n := len(m.Entries)
+	if n == 0 {
+		return false
+	}
+	e := m.Entries[n-1]
+	return e.Kind == model.EntryAssistant && e.Streaming && e.ThinkEnd.IsZero() && e.Content == "" && e.Reasoning != ""
+}
+
 // thoughtFor reports how long the model reasoned in the latest assistant
 // entry that has a reasoning trace this turn.
 func thoughtFor(m *model.App) time.Duration {
@@ -64,6 +75,9 @@ func ActivityLine(m *model.App) string {
 	}
 	if n := m.TurnTokens(); n > 0 {
 		stats = append(stats, "↓ "+model.FmtTokens(n)+" tokens")
+	}
+	if !m.ShowThinking && thinkingNow(m) {
+		stats = append(stats, "ctrl+o to see thinking")
 	}
 	if d := thoughtFor(m); d > 0 {
 		stats = append(stats, "thought for "+model.FmtDur(d))

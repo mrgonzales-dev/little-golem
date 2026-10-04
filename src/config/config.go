@@ -12,7 +12,7 @@ const (
 	LlamaLibDir = "/home/mrg/models/little-golem/llama-server-setup"
 
 	// ModelPath is the GGUF model file to load.
-	// ModelPath = "/home/mrg/models/MiniCPM5-2B-Claude-Thinking-Q4_K_M.gguf"
+	// ModelPath = "/home/mrg/models/little-golem/model/MiniCPM5-2B-Claude-Thinking-Q4_K_M.gguf"
 	ModelPath = "/home/mrg/models/little-golem/model/MiniCPM5-2B-Q4_K_M.gguf"
 
 	// CtxSize is the llama.cpp context window in tokens.

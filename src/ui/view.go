@@ -106,7 +106,14 @@ func RenderAssistant(b *strings.Builder, owner *model.App, e model.Entry, w int)
 	thinking := e.Streaming && e.ThinkEnd.IsZero() && e.Content == ""
 	switch {
 	case thinking:
-		// The live verb sits on the activity line above the input.
+		// Hidden: the live verb on the activity line is enough. Shown
+		// (ctrl+o): stream the reasoning as it arrives.
+		if owner.ShowThinking && e.Reasoning != "" {
+			b.WriteString(UIThinkHeadStyle.Render("- Thinking…"))
+			b.WriteString("\n")
+			b.WriteString(UIThinkBodyStyle.Width(w - 2).PaddingLeft(2).Render(e.Reasoning))
+			b.WriteString("\n\n")
+		}
 	case e.Reasoning != "":
 		mark := "+"
 		if owner.ShowThinking {
