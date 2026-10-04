@@ -5,3 +5,4 @@ model/*
 llama-server-setup/*
 !llama-server-setup/README.md
 .agents/
+skills-lock.json
