@@ -16,9 +16,9 @@ const (
 	ModelPath = "/home/mrg/models/little-golem/model/MiniCPM5-2B-Q4_K_M.gguf"
 
 	// CtxSize is the llama.cpp context window in tokens.
-	CtxSize = 128000
+	CtxSize = 16384
 
 	// CompactAt is the context size in tokens at which the history is
-	// compacted automatically: half the window.
-	CompactAt = CtxSize / 2
+	// compacted automatically: 60% of the window.
+	CompactAt = CtxSize * 3 / 5
 )
