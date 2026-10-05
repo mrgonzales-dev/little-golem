@@ -118,20 +118,38 @@ func TestFileToolsNeedApprovalAndKeyByCall(t *testing.T) {
 }
 
 func TestEditApprovalCardShowsDiff(t *testing.T) {
+	_, dir := fileRegistry(t)
+	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
+	os.WriteFile(filepath.Join(dir, "src", "x.go"), []byte("package x\n\nfunc a() {\n\told line\n\tkeep\n}\n"), 0o644)
+
 	a := app.New(nil).App
 	a.Ready, a.Width, a.Height = true, 80, 30
-	a.Current = &model.PendingCall{Name: "edit", Arguments: `{"path":"src/x.go","old_string":"old line","new_string":"new line\nsecond"}`}
+	a.Current = &model.PendingCall{Name: "edit", Arguments: `{"path":"src/x.go","old_string":"\told line\n\tkeep","new_string":"\tnew line\n\tsecond\n\tkeep"}`}
 	ui.Layout(a)
-	out := strings.Join(screen(a), "\n")
-	for _, want := range []string{"Edit file?", "src/x.go", "- old line", "+ new line", "+ second"} {
-		if !strings.Contains(stripANSI(out), want) {
-			t.Errorf("card missing %q:\n%s", want, stripANSI(out))
+	out := stripANSI(strings.Join(screen(a), "\n"))
+	for _, want := range []string{"Edit file?", "src/x.go", "+2 -1", "4 - ", "old line", "4 + ", "new line", "+ ", "second"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("card missing %q:\n%s", want, out)
 		}
 	}
 
 	a.Current = &model.PendingCall{Name: "write", Arguments: `{"path":"n.txt","content":"a\nb\nc"}`}
 	ui.Layout(a)
-	if out := stripANSI(strings.Join(screen(a), "\n")); !strings.Contains(out, "Write file?") || !strings.Contains(out, "n.txt (3 lines)") {
+	if out := stripANSI(strings.Join(screen(a), "\n")); !strings.Contains(out, "Create file?") || !strings.Contains(out, "n.txt") || !strings.Contains(out, "+3 -0") {
 		t.Errorf("write card:\n%s", out)
+	}
+
+	os.WriteFile(filepath.Join(dir, "n.txt"), []byte("a\nB\nc\n"), 0o644)
+	a.ResetDiff() // the app does this whenever a call is answered
+	a.Current = &model.PendingCall{Name: "write", Arguments: `{"path":"n.txt","content":"a\nb\nc"}`}
+	ui.Layout(a)
+	if out := stripANSI(strings.Join(screen(a), "\n")); !strings.Contains(out, "Overwrite file?") || !strings.Contains(out, "+1 -1") {
+		t.Errorf("overwrite card should diff against the old file:\n%s", out)
+	}
+
+	a.Current = &model.PendingCall{Name: "edit", Arguments: `{"path":"src/x.go","old_string":"nope","new_string":"y"}`}
+	ui.Layout(a)
+	if out := stripANSI(strings.Join(screen(a), "\n")); !strings.Contains(out, "old_string was not found") {
+		t.Errorf("missing warning:\n%s", out)
 	}
 }

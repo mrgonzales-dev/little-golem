@@ -142,6 +142,7 @@ func StartToolEntry(m *model.App, pc model.PendingCall) {
 	m.Entries = append(m.Entries, model.Entry{
 		Kind: model.EntryTool, Tool: pc.Name, Cmd: pc.Summary(),
 		CallID: pc.CallIndex, Streaming: true, Started: time.Now(),
+		Diff: pc.DiffFor(), // captured now: the file is still unchanged
 	})
 }
 

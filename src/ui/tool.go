@@ -76,6 +76,10 @@ func RenderTool(b *strings.Builder, e model.Entry, w int, expand bool) {
 		b.WriteString(UIHintStyle.Render(hint))
 		return
 	}
+	if e.Diff != nil && !failed {
+		renderDiff(b, e.Diff, w, expand)
+		return
+	}
 	if out == "" {
 		return
 	}

@@ -83,6 +83,7 @@ func BashConfirm(m *model.App, d model.Decision, reason string) tea.Cmd {
 	}
 	pc := *m.Current
 	m.Current = nil
+	m.ResetDiff()
 	m.Reasoning = false
 	m.Reason.Reset()
 	m.Reason.Blur()

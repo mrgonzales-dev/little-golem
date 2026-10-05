@@ -20,6 +20,9 @@ var (
 	UISuccess = lipgloss.Color("#7fd88f")
 	UIError   = lipgloss.Color("#e06c75")
 
+	UIDiffAddBg = lipgloss.Color("#12261a")
+	UIDiffDelBg = lipgloss.Color("#2b171a")
+
 	UITitleStyle    = lipgloss.NewStyle().Bold(true).Foreground(UIText).Background(UIBg)
 	UISubtitleStyle = lipgloss.NewStyle().Foreground(UIMuted).Background(UIBg)
 	UIHintStyle     = lipgloss.NewStyle().Foreground(UIMuted).Background(UIBg)

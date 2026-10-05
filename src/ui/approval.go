@@ -49,18 +49,14 @@ func prefixed(prefix, s string, limit int) []string {
 // bgEl returns a style on the approval card background.
 func bgEl() lipgloss.Style { return lipgloss.NewStyle().Background(UIBgEl) }
 
-// ApprovalCard renders the bash approval prompt that replaces the input
-// box: the command, the choices, and a key hint. In reason mode the
-// choices give way to a one-line input.
-func ApprovalCard(m *model.App) string {
-	inner := max(1, m.Width-4) // thick left border (1) + padding (2) + 1 spare
-	line := func(st lipgloss.Style, s string) string { return st.Width(inner).Render(s) }
-
-	heading, body := approvalPreview(*m.Current)
+// commandCardRows is the card body for bash (and the plain fallback for
+// edit/write calls that cannot be previewed).
+func commandCardRows(pc model.PendingCall, inner int, line func(lipgloss.Style, string) string) []string {
+	heading, body := approvalPreview(pc)
 	rows := []string{line(bgEl().Foreground(UIWarning).Bold(true), heading)}
 
 	limit := maxDiffLines
-	if m.Current.Name == "bash" {
+	if pc.Name == "bash" {
 		limit = maxCmdLines
 	}
 	type row struct {
@@ -85,6 +81,22 @@ func ApprovalCard(m *model.App) string {
 	}
 	for _, r := range wrapped {
 		rows = append(rows, line(r.st, r.text))
+	}
+	return rows
+}
+
+// ApprovalCard renders the approval prompt that replaces the input
+// box: the command, the choices, and a key hint. In reason mode the
+// choices give way to a one-line input.
+func ApprovalCard(m *model.App) string {
+	inner := max(1, m.Width-4) // thick left border (1) + padding (2) + 1 spare
+	line := func(st lipgloss.Style, s string) string { return st.Width(inner).Render(s) }
+
+	var rows []string
+	if d := m.CurrentDiffFor(); d != nil {
+		rows = diffCardRows(m.Current.Name, d, inner, line)
+	} else {
+		rows = commandCardRows(*m.Current, inner, line)
 	}
 
 	if m.Reasoning {

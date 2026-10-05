@@ -40,7 +40,8 @@ type Entry struct {
 	CallID    string // tool entries: matches PendingCall.CallIndex while running
 	Reasoning string
 	Streaming bool
-	Draft     bool // tool entries: the model is still writing the call
+	Draft     bool        // tool entries: the model is still writing the call
+	Diff      *tools.Diff // edit/write entries: the change, captured before it ran
 
 	Started  time.Time
 	ThinkEnd time.Time // when the first content token arrived
@@ -120,6 +121,10 @@ type App struct {
 	Pending []PendingCall
 	// Current is the call awaiting user confirmation, if any.
 	Current *PendingCall
+	// CurrentDiff caches the preview of Current when it is an edit or
+	// write, keyed by the call (see CurrentDiffFor).
+	CurrentDiff    *tools.Diff
+	currentDiffKey string
 	// ApprovalSel is the highlighted Approvals row; Reasoning is true while
 	// the user types a denial reason into Reason.
 	ApprovalSel int
@@ -199,6 +204,31 @@ var Approvals = []Approval{
 	{"Allow for session", "a", AllowSession},
 	{"Deny", "n", Deny},
 	{"Deny with reason…", "r", DenyReason},
+}
+
+// DiffFor previews an edit or write call, or returns nil for other tools
+// and for calls whose arguments do not parse.
+func (p PendingCall) DiffFor() *tools.Diff {
+	if p.Name != "edit" && p.Name != "write" {
+		return nil
+	}
+	d, _ := tools.BuildDiff(p.Name, p.Arguments)
+	return d
+}
+
+// ResetDiff drops the cached preview once the call has been answered.
+func (m *App) ResetDiff() { m.CurrentDiff, m.currentDiffKey = nil, "" }
+
+// CurrentDiffFor returns the cached preview of the call awaiting approval,
+// building it on first use so the file is not re-read on every frame.
+func (m *App) CurrentDiffFor() *tools.Diff {
+	if m.Current == nil {
+		return nil
+	}
+	if key := m.Current.Key(); key != m.currentDiffKey {
+		m.CurrentDiff, m.currentDiffKey = m.Current.DiffFor(), key
+	}
+	return m.CurrentDiff
 }
 
 // Working reports whether the agent is mid-turn: streaming, waiting for
