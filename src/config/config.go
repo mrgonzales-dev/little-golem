@@ -19,6 +19,14 @@ const (
 	// it fails to load, the chat model summarizes instead.
 	CompactModel = "/home/mrg/models/little-golem/model/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
 
+	// ThinkBudget caps the thinking tokens per reply; llama.cpp forces the
+	// end-of-thinking tag once it is spent.
+	ThinkBudget = 512
+
+	// ThinkBudgetMessage is injected before the end tag when the budget is
+	// spent, so the model answers instead of resuming mid-thought.
+	ThinkBudgetMessage = "... enough thinking, answering now."
+
 	// CompactAt is the context size in tokens at which the history is
 	// compacted automatically: 80% of the window.
 	CompactAt = CtxSize * 8 / 10

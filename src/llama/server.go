@@ -52,6 +52,8 @@ func StartServer(modelPath string) (*Server, error) {
 		"--ctx-size", strconv.Itoa(config.CtxSize),
 		"--jinja",
 		"--reasoning-format", "deepseek",
+		"--reasoning-budget", strconv.Itoa(config.ThinkBudget),
+		"--reasoning-budget-message", config.ThinkBudgetMessage,
 	)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
