@@ -75,6 +75,10 @@ func Compact(m *model.App, focus string, auto, resume bool) tea.Cmd {
 	srv, before := m.Server, m.TokenUsed
 	ui.RenderEntries(m)
 	return func() tea.Msg {
+		if fast, err := bootServer(config.CompactModel); err == nil {
+			defer fast.Stop()
+			srv = fast
+		}
 		s, err := srv.Complete(ctx, msgs, summaryMaxTokens)
 		if err == nil && s == "" {
 			err = errors.New("the model returned an empty summary")

@@ -14,6 +14,11 @@ const (
 	// CtxSize is the llama.cpp context window in tokens.
 	CtxSize = 16384
 
+	// CompactModel is the small instruct GGUF that summarizes the history
+	// for compaction. It is started on demand and stopped afterwards; when
+	// it fails to load, the chat model summarizes instead.
+	CompactModel = "/home/mrg/models/little-golem/model/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
+
 	// CompactAt is the context size in tokens at which the history is
 	// compacted automatically: 90% of the window.
 	CompactAt = CtxSize * 9 / 10

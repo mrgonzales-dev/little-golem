@@ -26,6 +26,9 @@ func stripANSI(s string) string { return ansi.Strip(s) }
 func fakeLlama(t *testing.T, summary string, fail bool, bodies *[]string) *llama.Server {
 	t.Helper()
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		var req struct{ Stream bool }
 		json.Unmarshal(raw, &req)
@@ -41,7 +44,16 @@ func fakeLlama(t *testing.T, summary string, fail bool, bodies *[]string) *llama
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": summary}}}})
 	}))
 	t.Cleanup(ts.Close)
-	return &llama.Server{Base: ts.URL}
+	srv := &llama.Server{Base: ts.URL}
+	prev := app.LoadServer
+	t.Cleanup(func() { app.LoadServer = prev })
+	app.LoadServer = func(path string) (*llama.Server, error) {
+		if path != config.CompactModel {
+			t.Errorf("compaction loaded %s", path)
+		}
+		return srv, nil
+	}
+	return srv
 }
 
 func compactApp(srv *llama.Server) *model.App {
