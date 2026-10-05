@@ -16,17 +16,25 @@ import (
 )
 
 const (
-	summaryMaxTokens = 4096
-	clipResult       = 1500 // chars of one tool result fed to the summarizer
-	clipArgs         = 600  // chars of one tool call's arguments
+	summaryMaxTokens = 1024
+	clipResult       = 800  // chars of one tool result fed to the summarizer
+	clipArgs         = 500  // chars of one tool call's arguments
+	keepTailMax      = 6000 // chars of the latest tool exchange kept verbatim
+	headKeep         = 2000 // chars of the transcript start kept when it must be cut
+
+	// transcriptMax keeps the summarizer's prompt plus its answer inside its
+	// context window (about 3 chars per token, with room for the prompt).
+	transcriptMax = (config.CtxSize - summaryMaxTokens - 600) * 3
 
 	compactSystem = `You compress a coding-agent session so the work can continue from an empty context.
-Write a dense, factual summary with these parts, omitting any that are empty:
-GOAL: what the user wants, including every standing instruction or preference.
-DONE: what has been accomplished, including files created or edited and what changed in each, and commands that were run with their key results.
-FACTS: file paths, function names, line numbers, error messages and other details that will be needed again. Copy them exactly.
-STATE: where the work stands right now.
-NEXT: the next step, and anything unresolved or failing.
+Write a short, dense, factual summary. Put the most important things first and leave out anything minor.
+Use these sections in this order, omitting empty ones:
+GOAL: what the user wants and every standing instruction or preference, in the user's own words where possible. Most important section.
+NEXT: the exact next step, and anything unresolved, failing or blocked.
+STATE: where the work stands right now, including the file or task in progress.
+DONE: only finished work, one line each: files created or edited and what changed, commands run and their key result. State clearly that these are finished so they are not redone.
+FACTS: exact file paths, function names, line numbers and error messages that will be needed again. Copy them verbatim.
+If space is short, trim DONE first. Never drop GOAL, NEXT or exact names.
 Use short bullet points. Never invent anything that is not in the conversation. No preamble.`
 
 	summaryHeader = "Summary of our conversation so far (the earlier messages were compacted to save context):\n\n"
@@ -37,9 +45,34 @@ Use short bullet points. Never invent anything that is not in the conversation. 
 type CompactDoneMsg struct {
 	Summary string
 	Err     error
-	Auto    bool // started by the context threshold, not /compact
-	Resume  bool // a turn is in progress and continues afterwards
-	Before  int  // tokens in use when compaction started
+	Auto    bool                // started by the context threshold, not /compact
+	Resume  bool                // a turn is in progress and continues afterwards
+	Before  int                 // tokens in use when compaction started
+	Tail    []llama.ChatMessage // latest tool exchange, kept verbatim after the summary
+}
+
+// latestExchange returns the trailing assistant tool calls and their results
+// when they are small enough to keep verbatim, so a resumed turn still sees
+// what it just did.
+func latestExchange(h []llama.ChatMessage) []llama.ChatMessage {
+	i := len(h)
+	for i > 0 && h[i-1].Role == "tool" {
+		i--
+	}
+	if i == len(h) || i < 2 || h[i-1].Role != "assistant" || len(h[i-1].ToolCalls) == 0 {
+		return nil
+	}
+	tail, size := h[i-1:], 0
+	for _, msg := range tail {
+		size += len(msg.Content)
+		for _, tc := range msg.ToolCalls {
+			size += len(tc.Function.Arguments)
+		}
+	}
+	if size > keepTailMax {
+		return nil
+	}
+	return tail
 }
 
 // ShouldAutoCompact reports whether the context has reached the
@@ -61,7 +94,12 @@ func Compact(m *model.App, focus string, auto, resume bool) tea.Cmd {
 		m.TurnStart, m.VerbSeed = time.Now(), config.NewVerbSeed()
 		m.TurnDone, m.ReqTokens = 0, 0
 	}
-	ask := "Conversation to summarize:\n\n" + transcript(m.History) + "\n\nWrite the summary now."
+	var tail []llama.ChatMessage
+	if resume {
+		tail = latestExchange(m.History)
+	}
+	ask := "Conversation to summarize:\n\n" + transcript(m.History[:len(m.History)-len(tail)]) +
+		"\n\nWrite the summary now. Lead with the most important things."
 	if focus != "" {
 		ask += " Pay particular attention to: " + focus
 	}
@@ -83,7 +121,7 @@ func Compact(m *model.App, focus string, auto, resume bool) tea.Cmd {
 		if err == nil && s == "" {
 			err = errors.New("the model returned an empty summary")
 		}
-		return CompactDoneMsg{Summary: s, Err: err, Auto: auto, Resume: resume, Before: before}
+		return CompactDoneMsg{Summary: s, Err: err, Auto: auto, Resume: resume, Before: before, Tail: tail}
 	}
 }
 
@@ -106,14 +144,24 @@ func FinishCompact(m *model.App, msg CompactDoneMsg) tea.Cmd {
 	}
 
 	summary := summaryHeader + msg.Summary
+	used := len(config.Prompt()) + len(summary)
 	if msg.Resume {
-		summary += "\n\nThe user's current request (keep working on it):\n" + m.Request
-		m.History = []llama.ChatMessage{{Role: "user", Content: summary}}
+		summary = summaryHeader + "The user's original request (for reference; it is already in progress):\n" + m.Request +
+			"\n\n" + msg.Summary +
+			"\n\nIMPORTANT: you are in the MIDDLE of this task, not at the start. Everything listed as DONE is finished: do not redo it and do not start over. Continue from NEXT."
+		m.History = append([]llama.ChatMessage{{Role: "user", Content: summary}}, msg.Tail...)
+		used = len(config.Prompt()) + len(summary)
+		for _, t := range msg.Tail {
+			used += len(t.Content)
+			for _, tc := range t.ToolCalls {
+				used += len(tc.Function.Arguments)
+			}
+		}
 	} else {
 		m.History = []llama.ChatMessage{{Role: "user", Content: summary}, {Role: "assistant", Content: summaryAck}}
 	}
 	m.CompactFailed = false
-	m.TokenUsed = (len(config.Prompt()) + len(summary)) / 4
+	m.TokenUsed = used / 4
 	m.Entries = append(m.Entries, model.Entry{
 		Kind: model.EntryNote,
 		Content: fmt.Sprintf("context compacted · %s → ~%s tokens",
@@ -145,7 +193,12 @@ func transcript(h []llama.ChatMessage) string {
 			b.WriteString("TOOL RESULT (" + msg.Name + "): " + clip(msg.Content, clipResult) + "\n\n")
 		}
 	}
-	return strings.TrimSpace(b.String())
+	s := strings.TrimSpace(b.String())
+	if len(s) > transcriptMax {
+		s = strings.ToValidUTF8(s[:headKeep], "") + "\n\n[... middle of the conversation omitted ...]\n\n" +
+			strings.ToValidUTF8(s[len(s)-(transcriptMax-headKeep):], "")
+	}
+	return s
 }
 
 // clip cuts s to about n bytes, marking how much was dropped.

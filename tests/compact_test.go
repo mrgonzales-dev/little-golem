@@ -138,8 +138,21 @@ func TestAutoCompactBetweenToolRounds(t *testing.T) {
 	if next == nil || !a.Busy {
 		t.Fatal("turn did not resume after compaction")
 	}
-	if len(a.History) != 1 || !strings.Contains(a.History[0].Content, "- did stuff") || !strings.HasSuffix(a.History[0].Content, "fix the parser") {
+	first := a.History[0].Content
+	if len(a.History) != 3 || a.History[1].ToolCalls == nil || a.History[2].Role != "tool" ||
+		!strings.Contains(first, "- did stuff") || !strings.Contains(first, "fix the parser") ||
+		!strings.Contains(first, "do not start over") || strings.Index(first, "fix the parser") > strings.Index(first, "- did stuff") {
 		t.Fatalf("history %+v", a.History)
+	}
+	if strings.Contains(bodies[len(bodies)-1], "cat parser.go") {
+		t.Fatal("the kept exchange was also sent to the summarizer")
+	}
+	a = compactApp(fakeLlama(t, "- did stuff", false, &bodies))
+	a.History[3].Content = strings.Repeat("y", 7000)
+	a.TokenUsed = config.CompactAt
+	app.FinishCompact(a, app.RunNext(a)().(app.CompactDoneMsg))
+	if len(a.History) != 1 {
+		t.Fatalf("oversized exchange was kept: %d messages", len(a.History))
 	}
 	if a.TokenUsed >= config.CompactAt {
 		t.Fatalf("TokenUsed %d not reset", a.TokenUsed)
