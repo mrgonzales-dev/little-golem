@@ -165,7 +165,11 @@ func RenderAssistant(b *strings.Builder, owner *model.App, e model.Entry, w int)
 		b.WriteString("\n")
 	}
 	if !e.Streaming {
-		footer := UIGlyphStyle.Render(" ▣") + UIHintStyle.Render(" minicpm")
+		name := e.Model
+		if name == "" {
+			name = owner.ModelName()
+		}
+		footer := UIGlyphStyle.Render(" ▣") + UIHintStyle.Render(" "+name)
 		if d := e.Duration(); d > 0 {
 			footer += UIHintStyle.Render(" · " + model.FmtDur(d))
 		}
@@ -206,7 +210,7 @@ func View(m *model.App) tea.View {
 	}
 	header := UIHeaderBlock.Width(m.Width).Render(
 		UIGlyphStyle.Render("▣") + " " + UITitleStyle.Render("little-golem") +
-			"  " + UISubtitleStyle.Render("minicpm-2b · llama.cpp") + ctx)
+			"  " + UISubtitleStyle.Render(m.ModelLabel()+" · llama.cpp") + ctx)
 
 	screen := lipgloss.JoinVertical(lipgloss.Left,
 		body,

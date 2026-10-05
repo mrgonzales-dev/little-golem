@@ -15,6 +15,8 @@ func Verb(m *model.App) string {
 	switch {
 	case m.Current != nil:
 		return "Awaiting approval"
+	case m.Switching != "":
+		return "Loading " + m.Switching
 	case m.Compacting:
 		return "Compacting context"
 	case m.Running != "":
@@ -69,7 +71,7 @@ func ActivityLine(m *model.App) string {
 		return ""
 	}
 	var stats []string
-	if m.Current == nil {
+	if m.Current == nil && m.Switching == "" {
 		stats = append(stats, "esc to interrupt")
 	}
 	if !m.TurnStart.IsZero() {
@@ -81,7 +83,7 @@ func ActivityLine(m *model.App) string {
 	if !m.ShowThinking && thinkingNow(m) {
 		stats = append(stats, "ctrl+o to see thinking")
 	}
-	if d := thoughtFor(m); d > 0 {
+	if d := thoughtFor(m); d > 0 && m.Switching == "" {
 		stats = append(stats, "thought for "+model.FmtDur(d))
 	}
 	return " " + m.Spinner.View() +

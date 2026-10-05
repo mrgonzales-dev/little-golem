@@ -99,6 +99,10 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case CompactDoneMsg:
 		return m, FinishCompact(m.App, msg)
 
+	case ModelSwitchedMsg:
+		FinishSwitch(m.App, msg)
+		return m, nil
+
 	case ExecDoneMsg:
 		m.Running = ""
 		RecordToolResult(m.App, msg.Call, msg.Content)

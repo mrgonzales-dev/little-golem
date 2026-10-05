@@ -31,8 +31,8 @@ type Server struct {
 }
 
 // StartServer picks a free localhost port, spawns llama-server pointed at
-// the configured GGUF, and returns a *Server talking to its HTTP API.
-func StartServer() (*Server, error) {
+// the given GGUF, and returns a *Server talking to its HTTP API.
+func StartServer(modelPath string) (*Server, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func StartServer() (*Server, error) {
 	}
 
 	cmd := exec.Command(config.LlamaBin,
-		"--model", config.ModelPath,
+		"--model", modelPath,
 		"--host", "127.0.0.1",
 		"--port", strconv.Itoa(port),
 		"--ctx-size", strconv.Itoa(config.CtxSize),
@@ -78,11 +78,13 @@ func StartServer() (*Server, error) {
 
 // Stop kills the llama-server process and waits for it to exit.
 func (s *Server) Stop() {
-	if s.Cmd.Process != nil {
+	if s.Cmd != nil && s.Cmd.Process != nil {
 		s.Cmd.Process.Kill()
 		<-s.Done
 	}
-	s.LogFile.Close()
+	if s.LogFile != nil {
+		s.LogFile.Close()
+	}
 }
 
 // WaitReady polls /health until the model is loaded or the process dies.

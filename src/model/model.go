@@ -16,6 +16,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 
+	"little-golem/src/config"
 	"little-golem/src/llama"
 	"little-golem/src/tools"
 )
@@ -39,6 +40,7 @@ type Entry struct {
 	Cmd       string // tool entries: command or query the model passed
 	CallID    string // tool entries: matches PendingCall.CallIndex while running
 	Reasoning string
+	Model     string // assistant entries: name of the model that wrote it
 	Streaming bool
 	Draft     bool        // tool entries: the model is still writing the call
 	Diff      *tools.Diff // edit/write entries: the change, captured before it ran
@@ -96,6 +98,10 @@ func FmtTokens(n int) string {
 // App is the root Bubble Tea model state shared across packages.
 type App struct {
 	Server *llama.Server
+	// ModelIdx indexes config.Models: the model Server is running.
+	// Switching names the model being loaded while a switch is in flight.
+	ModelIdx  int
+	Switching string
 
 	Width, Height int
 	Ready         bool
@@ -236,10 +242,16 @@ func (m *App) CurrentDiffFor() *tools.Diff {
 }
 
 // Working reports whether the agent is mid-turn: streaming, waiting for
-// tool approval, executing a tool, or compacting.
+// tool approval, executing a tool, compacting, or loading another model.
 func (m *App) Working() bool {
-	return m.Busy || m.Current != nil || m.Running != "" || m.Compacting
+	return m.Busy || m.Current != nil || m.Running != "" || m.Compacting || m.Switching != ""
 }
+
+// ModelName is the short name of the running model.
+func (m *App) ModelName() string { return config.Models[m.ModelIdx].Name }
+
+// ModelLabel is the header label of the running model.
+func (m *App) ModelLabel() string { return config.Models[m.ModelIdx].Label }
 
 // TurnTokens is the running completion-token count for the current turn.
 func (m *App) TurnTokens() int { return m.TurnDone + m.ReqTokens }

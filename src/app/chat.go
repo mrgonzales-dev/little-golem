@@ -35,7 +35,7 @@ func Send(m *model.App) tea.Cmd {
 	m.History = append(m.History, llama.ChatMessage{Role: "user", Content: text})
 	m.Entries = append(m.Entries,
 		model.Entry{Kind: model.EntryUser, Content: text},
-		model.Entry{Kind: model.EntryAssistant, Streaming: true, Started: time.Now()},
+		model.Entry{Kind: model.EntryAssistant, Model: m.ModelName(), Streaming: true, Started: time.Now()},
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -181,6 +181,7 @@ func Continue(m *model.App) tea.Cmd {
 	m.EventsChan = make(chan llama.StreamEvent, 64)
 	m.Entries = append(m.Entries, model.Entry{
 		Kind:      model.EntryAssistant,
+		Model:     m.ModelName(),
 		Streaming: true,
 		Started:   time.Now(),
 	})

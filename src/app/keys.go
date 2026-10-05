@@ -49,10 +49,16 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			}
 			return Compact(m, strings.TrimSpace(rest), false, false), true
 		}
+		if rest, ok := strings.CutPrefix(text, "/models"); ok && (rest == "" || rest[0] == ' ') {
+			m.Input.Reset()
+			return SwitchModel(m, strings.TrimSpace(rest)), true
+		}
 		if m.Ready && !m.Working() {
 			return Send(m), true
 		}
 		return nil, true
+	case "ctrl+m":
+		return SwitchModel(m, ""), true
 	case "ctrl+y":
 		if reply, ok := LastReply(m); ok {
 			m.Notice = "copied reply"

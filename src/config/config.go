@@ -11,10 +11,6 @@ const (
 	// it is prepended to LD_LIBRARY_PATH when spawning llama-server.
 	LlamaLibDir = "/home/mrg/models/little-golem/llama-server-setup"
 
-	// ModelPath is the GGUF model file to load.
-	// ModelPath = "/home/mrg/models/little-golem/model/MiniCPM5-2B-Claude-Thinking-Q4_K_M.gguf"
-	ModelPath = "/home/mrg/models/little-golem/model/MiniCPM5-2B-Q4_K_M.gguf"
-
 	// CtxSize is the llama.cpp context window in tokens.
 	CtxSize = 16384
 
@@ -22,3 +18,15 @@ const (
 	// compacted automatically: 60% of the window.
 	CompactAt = CtxSize * 3 / 5
 )
+
+// Model is one selectable GGUF. Name is the short id used by /models and the
+// reply footer; Label is shown in the header.
+type Model struct{ Name, Label, Path string }
+
+// Models lists the selectable models; the first one loads at startup. Switch
+// at runtime with ctrl+m or /models. Both share the CtxSize window.
+// Another MiniCPM variant: model/MiniCPM5-2B-Claude-Thinking-Q4_K_M.gguf
+var Models = []Model{
+	{"minicpm", "minicpm-2b", "/home/mrg/models/little-golem/model/MiniCPM5-2B-Q4_K_M.gguf"},
+	{"spark", "spark-x2.5-1.7b", "/home/mrg/models/little-golem/model/Spark-X2.5-1.7B-Q4_K_M.gguf"},
+}

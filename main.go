@@ -18,12 +18,11 @@ import (
 )
 
 func main() {
-	srv, err := llama.StartServer()
+	srv, err := llama.StartServer(config.Models[0].Path)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "little-golem:", err)
 		os.Exit(1)
 	}
-	defer srv.Stop()
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -40,6 +39,7 @@ func main() {
 	reg := tools.NewRegistry(tools.NewRead(), tools.NewGrep(), tools.NewGlob())
 
 	a := app.New(srv)
+	defer func() { a.Server.Stop() }() // the server may have been swapped by a model switch
 	a.Tools = reg
 	reg.Add(tools.NewBash(nil)) // Ask stays unset: confirmation flows through app.BashConfirm
 	reg.Add(tools.NewEdit())
