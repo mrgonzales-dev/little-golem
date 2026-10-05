@@ -23,8 +23,8 @@ const (
 	ThinkBudgetMessage = "... enough thinking, answering now."
 
 	// CompactAt is the context size in tokens at which the history is
-	// compacted automatically: 60% of the window.
-	CompactAt = CtxSize * 6 / 10
+	// compacted automatically: 80% of the window.
+	CompactAt = CtxSize * 8 / 10
 )
 
 // Model is one selectable GGUF. Name is the short id used by /models and the
