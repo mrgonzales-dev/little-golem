@@ -25,6 +25,10 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		return handleApproval(m, msg), true
 	}
 
+	if len(m.Refs) > 0 && handleRefKey(m, msg.String()) {
+		return nil, true
+	}
+
 	switch msg.String() {
 	case "shift+tab":
 		toggleBypass(m)

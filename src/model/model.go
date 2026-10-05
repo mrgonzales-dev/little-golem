@@ -181,6 +181,13 @@ type App struct {
 	Compacting    bool
 	CompactFailed bool
 
+	// Refs are the files and folders offered while an @word is typed; RefTok
+	// is the word they match and RefOff the word dismissed with esc.
+	Refs   []string
+	RefSel int
+	RefTok string
+	RefOff string
+
 	Err    error
 	Notice string
 

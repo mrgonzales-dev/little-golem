@@ -124,6 +124,7 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		if cmd, handled := HandleKey(m.App, msg); handled {
+			RefreshRefs(m.App)
 			return m, cmd
 		}
 	}
@@ -138,6 +139,7 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	m.Input, cmd = m.Input.Update(msg)
+	RefreshRefs(m.App)
 	return m, cmd
 }
 

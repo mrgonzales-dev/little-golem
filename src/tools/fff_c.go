@@ -231,6 +231,45 @@ func (f *fffIndex) Glob(pattern string, limit uint32) (string, error) {
 	return b.String(), nil
 }
 
+// FindPaths fuzzy-matches indexed files and folders against query, best
+// first; folders end in "/". It returns nothing when the index is not
+// running.
+func FindPaths(query string, limit int) []string {
+	fffSharedMu.Lock()
+	f := fffShared
+	fffSharedMu.Unlock()
+	if f == nil {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	q := C.CString(query)
+	defer C.free(unsafe.Pointer(q))
+
+	res := C.fff_search_mixed(f.h, q, nil, 0, 0, C.uint32_t(limit), 0, 0)
+	defer C.fff_free_result(res)
+	if C.fff_result_get_error(res) != nil {
+		return nil
+	}
+	sp := (*C.struct_FffMixedSearchResult)(C.fff_result_get_handle(res))
+	if sp == nil {
+		return nil
+	}
+	defer C.fff_free_mixed_search_result(sp)
+
+	var paths []string
+	for i := 0; i < min(int(sp.count), limit); i++ {
+		it := C.fff_mixed_search_result_get_item(sp, C.uint32_t(i))
+		p := C.GoString(it.relative_path)
+		if it.item_type == 1 {
+			p = strings.TrimSuffix(p, "/") + "/"
+		}
+		paths = append(paths, p)
+	}
+	return paths
+}
+
 // GrepTool searches file contents over the fff index.
 type GrepTool struct{}
 

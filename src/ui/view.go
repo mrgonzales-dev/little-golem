@@ -29,7 +29,11 @@ func CenterLogo(width, height int, label string) string {
 // ActivityBlock is the activity line as drawn on screen, wrapped to the
 // window width (it can be more than one row tall).
 func ActivityBlock(m *model.App) string {
-	return UIStatusBlock.Width(m.Width).Render(ActivityLine(m))
+	b := UIStatusBlock.Width(m.Width).Render(ActivityLine(m))
+	if p := RefBlock(m); p != "" {
+		b = lipgloss.JoinVertical(lipgloss.Left, b, p)
+	}
+	return b
 }
 
 // Layout computes the chat viewport dimensions and triggers a redraw.
