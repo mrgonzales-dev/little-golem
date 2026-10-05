@@ -31,15 +31,30 @@ func DiffStats(d *tools.Diff, bg color.Color) string {
 // background of unchanged lines. With limit > 0 only that many rows are
 // returned and hidden reports how many were cut.
 func diffRows(d *tools.Diff, w, limit int, ctxBg color.Color) (rows []string, hidden int) {
+	rows = diffRowsGW(d.Lines, w, gutterWidth(d.Lines), ctxBg)
+	if limit > 0 && len(rows) > limit {
+		hidden = len(rows) - limit
+		rows = rows[:limit]
+	}
+	return rows, hidden
+}
+
+// gutterWidth is the number of digits needed for the largest line number.
+func gutterWidth(lines []tools.DiffLine) int {
 	gw := 1
-	for _, l := range d.Lines {
+	for _, l := range lines {
 		if l.Kind != tools.DiffSkip {
 			gw = max(gw, len(strconv.Itoa(l.Num)))
 		}
 	}
+	return gw
+}
+
+// diffRowsGW renders lines with a gutter gw digits wide.
+func diffRowsGW(lines []tools.DiffLine, w, gw int, ctxBg color.Color) (rows []string) {
 	textW := max(4, w-gw-4) // gutter + space + sign + space + text
 
-	for _, l := range d.Lines {
+	for _, l := range lines {
 		bg, signFg, textFg, sign := ctxBg, UIMuted, UIMuted, " "
 		switch l.Kind {
 		case tools.DiffAdd:
@@ -69,11 +84,7 @@ func diffRows(d *tools.Diff, w, limit int, ctxBg color.Color) (rows []string, hi
 					base.Render(" ")+base.Foreground(textFg).Render(seg)))
 		}
 	}
-	if limit > 0 && len(rows) > limit {
-		hidden = len(rows) - limit
-		rows = rows[:limit]
-	}
-	return rows, hidden
+	return rows
 }
 
 // renderDiff draws an edit/write result: a "+3 -1" summary on the header
@@ -101,6 +112,44 @@ func renderDiff(b *strings.Builder, d *tools.Diff, w int, expand bool) {
 		more := lipgloss.NewStyle().Foreground(UIPrimary).Background(UIBgPanel).Padding(0, 1).Width(max(10, w-2)).
 			Render("… +" + strconv.Itoa(hidden) + " more lines (ctrl+x to expand)")
 		b.WriteString("\n" + indent.Render(more))
+	}
+}
+
+// renderDiffDraft draws an edit/write diff while the model is still writing
+// the call: a live "+3 -0" summary under the header, then the most recent
+// lines. Earlier lines are folded into a "… N earlier lines" row on top, so
+// the panel stays a fixed height as the content grows (expand shows all).
+func renderDiffDraft(b *strings.Builder, d *tools.Diff, w int, expand bool) {
+	note := ""
+	switch {
+	case d.Created:
+		note = " · new file"
+	case d.Overwriting:
+		note = " · overwriting"
+	case d.Matches > 1:
+		note = " · " + strconv.Itoa(d.Matches) + " matches"
+	}
+	b.WriteString("  " + DiffStats(d, UIBg) + UIHintStyle.Render(note+" · writing"))
+
+	lines, skipped := d.Lines, 0
+	if !expand && len(lines) > toolMaxDiffLines {
+		skipped = len(lines) - toolMaxDiffLines
+		lines = lines[skipped:]
+	}
+	panelW := max(10, w-2)
+	rows := diffRowsGW(lines, panelW, gutterWidth(d.Lines), UIBgPanel)
+	if !expand && len(rows) > toolMaxDiffLines {
+		skipped += len(rows) - toolMaxDiffLines
+		rows = rows[len(rows)-toolMaxDiffLines:]
+	}
+	indent := lipgloss.NewStyle().MarginLeft(2).MarginBackground(UIBg)
+	if skipped > 0 {
+		earlier := lipgloss.NewStyle().Foreground(UIMuted).Background(UIBgPanel).Padding(0, 1).Width(panelW).
+			Render("… " + strconv.Itoa(skipped) + " earlier lines")
+		b.WriteString("\n" + indent.Render(earlier))
+	}
+	for _, r := range rows {
+		b.WriteString("\n" + indent.Render(r))
 	}
 }
 

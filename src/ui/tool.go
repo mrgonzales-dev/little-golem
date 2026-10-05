@@ -62,6 +62,10 @@ func RenderTool(b *strings.Builder, e model.Entry, w int, expand bool) {
 	name := UIGlyphStyle.Bold(true).Render(e.Tool)
 	sep := UIToolStyle.Render(": ")
 	for i, c := range cmd {
+		if i == 0 && c == "" {
+			b.WriteString(glyph + " " + name)
+			continue
+		}
 		if i == 0 {
 			b.WriteString(glyph + " " + name + sep + UIAssistStyle.Background(UIBg).Render(c))
 		} else {
@@ -69,6 +73,10 @@ func RenderTool(b *strings.Builder, e model.Entry, w int, expand bool) {
 		}
 	}
 	if e.Streaming {
+		if e.Draft && e.Diff != nil {
+			renderDiffDraft(b, e.Diff, w, expand)
+			return
+		}
 		hint := "  running"
 		if e.Draft {
 			hint = "  writing"

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"little-golem/src/config"
 )
 
 // BashTool runs a shell command after the user approves it.
@@ -34,7 +36,7 @@ func (t *BashTool) Name() string { return "bash" }
 func (t *BashTool) RequiresApproval() bool { return true }
 
 func (t *BashTool) Description() string {
-	return "Run one shell command in the workspace (ls, cat, grep, git, and similar read commands) and return stdout/stderr. Requires user approval; pending commands are shown for y/n confirmation."
+	return "Run one shell command with the project folder as the working directory (ls, cat, grep, git, tests) and return stdout/stderr. Requires user approval; pending commands are shown for y/n confirmation."
 }
 
 func (t *BashTool) Parameters() json.RawMessage {
@@ -69,6 +71,10 @@ func (t *BashTool) Run(ctx context.Context, raw json.RawMessage) (Result, error)
 	runCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "/bin/sh", "-c", a.Command)
+	// Pin the working directory to the project folder: the prompt tells
+	// the model bash already runs there, and this keeps it true even if
+	// the process cwd was changed.
+	cmd.Dir = config.WorkDir
 	out, err := cmd.CombinedOutput()
 	content := strings.TrimRight(string(out), "\n")
 	if runCtx.Err() != nil {

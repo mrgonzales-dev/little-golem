@@ -140,6 +140,10 @@ type App struct {
 	ShowThinking bool // opencode "thinking" mode: hidden by default
 	ShowTools    bool // show full tool output instead of a short preview
 
+	// ActivityH is the row count the activity line occupied at the last
+	// layout; View re-lays out when it changes.
+	ActivityH int
+
 	// Follow keeps the viewport glued to the latest output. It is set
 	// on new turns and cleared when the user scrolls up, mirroring
 	// opencode's AtBottom-gated auto-scroll.
@@ -260,6 +264,16 @@ type toolAcc struct {
 	Name     string
 	argsBuf  strings.Builder
 	complete bool
+	// Snap caches the file an edit/write targets while its diff streams.
+	Snap tools.FileSnap
+}
+
+// DraftDiff previews the edit/write call still being written, or nil.
+func (a *toolAcc) DraftDiff() *tools.Diff {
+	if a.Name != "edit" && a.Name != "write" {
+		return nil
+	}
+	return tools.PartialDiff(a.Name, a.Args(), &a.Snap)
 }
 
 // PendingCall is one assembled tool call waiting to run.
@@ -307,6 +321,19 @@ func (p PendingCall) Key() string {
 	return p.Name + " " + p.Arguments
 }
 
+// DraftSummary is PartialSummary for a call still being written, per
+// tool. For write and edit the streamed diff panel below the header
+// already shows the content, so the header only needs the file path —
+// echoing the raw JSON (or arriving before "path") is noise.
+func DraftSummary(name, args string) string {
+	switch name {
+	case "write", "edit":
+		vals, _ := tools.PartialFields(args)
+		return vals["path"]
+	}
+	return PartialSummary(args)
+}
+
 // PartialSummary is Summary for a call whose arguments are still
 // streaming: it pulls the "command", "query" or "path" string out of
 // incomplete JSON, so the text can be shown as the model writes it.
@@ -319,54 +346,12 @@ func PartialSummary(args string) string {
 	return strings.TrimSpace(args)
 }
 
-// partialJSONString decodes the string value of key from possibly
-// truncated JSON, stopping at the closing quote or the end of input.
+// partialJSONString decodes the string value of the top-level key from
+// possibly truncated JSON, as far as it has been written.
 func partialJSONString(s, key string) (string, bool) {
-	i := strings.Index(s, `"`+key+`"`)
-	if i < 0 {
-		return "", false
-	}
-	s = strings.TrimLeft(s[i+len(key)+2:], " \t\r\n")
-	if !strings.HasPrefix(s, ":") {
-		return "", false
-	}
-	s = strings.TrimLeft(s[1:], " \t\r\n")
-	if !strings.HasPrefix(s, `"`) {
-		return "", false
-	}
-	var b strings.Builder
-	rs := []rune(s[1:])
-	for j := 0; j < len(rs); j++ {
-		switch c := rs[j]; c {
-		case '"':
-			return b.String(), true
-		case '\\':
-			if j+1 >= len(rs) {
-				return b.String(), true
-			}
-			j++
-			switch e := rs[j]; e {
-			case 'n':
-				b.WriteByte('\n')
-			case 't':
-				b.WriteByte('\t')
-			case 'r':
-			case 'u':
-				if j+4 >= len(rs) {
-					return b.String(), true
-				}
-				if n, err := strconv.ParseUint(string(rs[j+1:j+5]), 16, 32); err == nil {
-					b.WriteRune(rune(n))
-				}
-				j += 4
-			default:
-				b.WriteRune(e)
-			}
-		default:
-			b.WriteRune(c)
-		}
-	}
-	return b.String(), true
+	vals, _ := tools.PartialFields(s)
+	v, ok := vals[key]
+	return v, ok
 }
 
 // Index returns the numeric streamed index, or 0 when unknown.

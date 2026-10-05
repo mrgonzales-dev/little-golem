@@ -26,16 +26,23 @@ func CenterLogo(width, height int, label string) string {
 		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Background(UIBg)))
 }
 
+// ActivityBlock is the activity line as drawn on screen, wrapped to the
+// window width (it can be more than one row tall).
+func ActivityBlock(m *model.App) string {
+	return UIStatusBlock.Width(m.Width).Render(ActivityLine(m))
+}
+
 // Layout computes the chat viewport dimensions and triggers a redraw.
 // Every block is given its total width (padding included): the body is
 // padded 2 each side with a 1-column scrollbar, so the viewport is W-5.
 func Layout(m *model.App) {
-	const (
-		headerH   = 1
-		activityH = 1
-	)
+	const headerH = 1
 	m.Input.SetWidth(m.Width - 2)
-	vH := m.Height - headerH - activityH - lipgloss.Height(InputBlock(m))
+	// The activity line wraps onto a second row when its stats get long;
+	// reserve what it really needs so the extra row pushes the transcript
+	// up instead of pushing the input and header off the bottom.
+	m.ActivityH = lipgloss.Height(ActivityBlock(m))
+	vH := m.Height - headerH - m.ActivityH - lipgloss.Height(InputBlock(m))
 	if vH < 1 {
 		vH = 1
 	}
@@ -98,8 +105,8 @@ func RenderEntries(m *model.App) {
 	for _, i := range idxs {
 		acc := m.ToolAcc[i]
 		RenderTool(&b, model.Entry{
-			Kind: model.EntryTool, Tool: acc.Name, Cmd: model.PartialSummary(acc.Args()),
-			Streaming: true, Draft: true,
+			Kind: model.EntryTool, Tool: acc.Name, Cmd: model.DraftSummary(acc.Name, acc.Args()),
+			Streaming: true, Draft: true, Diff: acc.DraftDiff(),
 		}, w, m.ShowTools)
 		b.WriteString("\n\n")
 	}
@@ -172,6 +179,14 @@ func View(m *model.App) tea.View {
 		return tea.NewView("")
 	}
 
+	// The activity line's height changes as its text grows or wraps; resize
+	// the transcript to match before drawing so the screen never overflows.
+	activity := ActivityBlock(m)
+	if lipgloss.Height(activity) != m.ActivityH {
+		Layout(m)
+		activity = ActivityBlock(m)
+	}
+
 	var body string
 	if !m.Ready && m.Err == nil {
 		body = CenterLogo(m.Viewport.Width(), m.Viewport.Height(), m.Spinner.View()+" waking the golem…")
@@ -192,8 +207,6 @@ func View(m *model.App) tea.View {
 	header := UIHeaderBlock.Width(m.Width).Render(
 		UIGlyphStyle.Render("▣") + " " + UITitleStyle.Render("little-golem") +
 			"  " + UISubtitleStyle.Render("minicpm-2b · llama.cpp") + ctx)
-
-	activity := UIStatusBlock.Width(m.Width).Render(ActivityLine(m))
 
 	screen := lipgloss.JoinVertical(lipgloss.Left,
 		body,

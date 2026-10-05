@@ -28,11 +28,13 @@ type DiffLine struct {
 
 // Diff previews what an edit or write call does to a file.
 type Diff struct {
-	Path       string
-	Lines      []DiffLine
-	Adds, Dels int
-	Created    bool // write: the file does not exist yet
-	Matches    int  // edit: occurrences of old_string in the file, 0 if unknown
+	Path        string
+	Lines       []DiffLine
+	Adds, Dels  int
+	Created     bool // write: the file does not exist yet
+	Matches     int  // edit: occurrences of old_string in the file, 0 if unknown
+	Streaming   bool // built by PartialDiff while the call is still being written
+	Overwriting bool // streaming write: the file exists and will be replaced
 }
 
 const (
