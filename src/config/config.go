@@ -15,8 +15,8 @@ const (
 	CtxSize = 16384
 
 	// CompactAt is the context size in tokens at which the history is
-	// compacted automatically: 60% of the window.
-	CompactAt = CtxSize * 3 / 5
+	// compacted automatically: 90% of the window.
+	CompactAt = CtxSize * 9 / 10
 )
 
 // Model is one selectable GGUF. Name is the short id used by /models and the
