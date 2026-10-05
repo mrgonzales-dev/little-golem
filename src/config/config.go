@@ -14,11 +14,6 @@ const (
 	// CtxSize is the llama.cpp context window in tokens.
 	CtxSize = 16384
 
-	// CompactModel is the small instruct GGUF that summarizes the history
-	// for compaction. It is started on demand and stopped afterwards; when
-	// it fails to load, the chat model summarizes instead.
-	CompactModel = "/home/mrg/models/little-golem/model/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
-
 	// ThinkBudget caps the thinking tokens per reply; llama.cpp forces the
 	// end-of-thinking tag once it is spent.
 	ThinkBudget = 512
@@ -28,8 +23,8 @@ const (
 	ThinkBudgetMessage = "... enough thinking, answering now."
 
 	// CompactAt is the context size in tokens at which the history is
-	// compacted automatically: 80% of the window.
-	CompactAt = CtxSize * 8 / 10
+	// compacted automatically: 60% of the window.
+	CompactAt = CtxSize * 6 / 10
 )
 
 // Model is one selectable GGUF. Name is the short id used by /models and the

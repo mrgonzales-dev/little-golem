@@ -95,6 +95,9 @@ func RenderEntries(m *model.App) {
 		case model.EntryNote:
 			b.WriteString(UIHintStyle.Render("── " + e.Content + " ──"))
 			b.WriteString("\n\n")
+		case model.EntrySummary:
+			b.WriteString(UIHintStyle.Width(w).Render(e.Content))
+			b.WriteString("\n\n")
 		}
 	}
 

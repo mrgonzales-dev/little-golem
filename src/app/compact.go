@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,7 +21,12 @@ const (
 	clipResult       = 800  // chars of one tool result fed to the summarizer
 	clipArgs         = 500  // chars of one tool call's arguments
 	keepTailMax      = 6000 // chars of the latest tool exchange kept verbatim
-	headKeep         = 2000 // chars of the transcript start kept when it must be cut
+	clipRequest      = 300  // chars of one user request in the ledger
+	ledgerReqs       = 10   // user requests kept in the ledger
+	ledgerActs       = 40   // tool calls kept in the ledger
+
+	reqsLabel = "USER REQUESTS (oldest first):"
+	actsLabel = "ACTIONS DONE (finished, oldest first):"
 
 	// transcriptMax keeps the summarizer's prompt plus its answer inside its
 	// context window (about 3 chars per token, with room for the prompt).
@@ -113,11 +119,7 @@ func Compact(m *model.App, focus string, auto, resume bool) tea.Cmd {
 	srv, before := m.Server, m.TokenUsed
 	ui.RenderEntries(m)
 	return func() tea.Msg {
-		if fast, err := bootServer(config.CompactModel); err == nil {
-			defer fast.Stop()
-			srv = fast
-		}
-		s, err := srv.Complete(ctx, msgs, summaryMaxTokens)
+		s, err := srv.Complete(ctx, msgs, summaryMaxTokens, true)
 		if err == nil && s == "" {
 			err = errors.New("the model returned an empty summary")
 		}
@@ -143,12 +145,18 @@ func FinishCompact(m *model.App, msg CompactDoneMsg) tea.Cmd {
 		return nil
 	}
 
-	summary := summaryHeader + msg.Summary
+	reqs, acts := ledger(m.History[:len(m.History)-len(msg.Tail)])
+	shown := reqsLabel + "\n" + bullets(reqs) + "\n\n" + actsLabel + "\n" + bullets(acts) + "\n\nSUMMARY:\n" + msg.Summary
+	summary := summaryHeader + shown
 	used := len(config.Prompt()) + len(summary)
 	if msg.Resume {
-		summary = summaryHeader + "The user's original request (for reference; it is already in progress):\n" + m.Request +
-			"\n\n" + msg.Summary +
-			"\n\nIMPORTANT: you are in the MIDDLE of this task, not at the start. Everything listed as DONE is finished: do not redo it and do not start over. Continue from NEXT."
+		if len(msg.Tail) == 0 {
+			if note := lastNote(m.History); note != "" {
+				summary += "\n\nYOUR LAST STEP (what you were doing when the context was cleared):\n" + note
+			}
+		}
+		summary += "\n\nTHE USER'S CURRENT REQUEST (in progress, not new):\n" + m.Request +
+			"\n\nIMPORTANT: you are in the MIDDLE of this task, not at the start. Everything under ACTIONS DONE is finished: do not redo it and do not start over. Your files and earlier tool output are not in front of you any more: read again only what you need, then continue from NEXT."
 		m.History = append([]llama.ChatMessage{{Role: "user", Content: summary}}, msg.Tail...)
 		used = len(config.Prompt()) + len(summary)
 		for _, t := range msg.Tail {
@@ -161,12 +169,16 @@ func FinishCompact(m *model.App, msg CompactDoneMsg) tea.Cmd {
 		m.History = []llama.ChatMessage{{Role: "user", Content: summary}, {Role: "assistant", Content: summaryAck}}
 	}
 	m.CompactFailed = false
+	m.Seen, m.Repeats = nil, 0 // the old tool output is gone, so reads must be allowed again
 	m.TokenUsed = used / 4
-	m.Entries = append(m.Entries, model.Entry{
-		Kind: model.EntryNote,
-		Content: fmt.Sprintf("context compacted · %s → ~%s tokens",
-			model.FmtTokens(msg.Before), model.FmtTokens(m.TokenUsed)),
-	})
+	m.Entries = append(m.Entries,
+		model.Entry{
+			Kind: model.EntryNote,
+			Content: fmt.Sprintf("context compacted · %s → ~%s tokens",
+				model.FmtTokens(msg.Before), model.FmtTokens(m.TokenUsed)),
+		},
+		model.Entry{Kind: model.EntrySummary, Content: shown},
+	)
 	ui.RenderEntries(m)
 	if msg.Resume {
 		return Continue(m)
@@ -181,6 +193,10 @@ func transcript(h []llama.ChatMessage) string {
 	for _, msg := range h {
 		switch msg.Role {
 		case "user":
+			if strings.HasPrefix(msg.Content, summaryHeader) {
+				b.WriteString("EARLIER SUMMARY (carry its facts forward): " + strings.TrimPrefix(msg.Content, summaryHeader) + "\n\n")
+				continue
+			}
 			b.WriteString("USER: " + msg.Content + "\n\n")
 		case "assistant":
 			if msg.Content != "" {
@@ -195,10 +211,89 @@ func transcript(h []llama.ChatMessage) string {
 	}
 	s := strings.TrimSpace(b.String())
 	if len(s) > transcriptMax {
-		s = strings.ToValidUTF8(s[:headKeep], "") + "\n\n[... middle of the conversation omitted ...]\n\n" +
-			strings.ToValidUTF8(s[len(s)-(transcriptMax-headKeep):], "")
+		s = "[... older part of the conversation omitted ...]\n\n" + strings.ToValidUTF8(s[len(s)-transcriptMax:], "")
 	}
 	return s
+}
+
+// ledger lists, in code rather than by the summarizer, what the user asked
+// and what was done: a small model drops or garbles these. Entries from an
+// earlier compaction's summary are carried over.
+func ledger(h []llama.ChatMessage) (reqs, acts []string) {
+	for i, msg := range h {
+		switch msg.Role {
+		case "user":
+			if strings.HasPrefix(msg.Content, summaryHeader) {
+				if i == 0 {
+					reqs, acts = parseLedger(msg.Content)
+				}
+				continue
+			}
+			reqs = append(reqs, clip(oneLine(msg.Content), clipRequest))
+		case "assistant":
+			for _, tc := range msg.ToolCalls {
+				acts = append(acts, callLine(tc))
+			}
+		}
+	}
+	return lastN(reqs, ledgerReqs), lastN(acts, ledgerActs)
+}
+
+// parseLedger reads the two bullet lists back out of an earlier summary.
+func parseLedger(s string) (reqs, acts []string) {
+	var cur *[]string
+	for _, line := range strings.Split(s, "\n") {
+		switch {
+		case line == reqsLabel:
+			cur = &reqs
+		case line == actsLabel:
+			cur = &acts
+		case strings.HasPrefix(line, "- ") && cur != nil:
+			*cur = append(*cur, strings.TrimPrefix(line, "- "))
+		default:
+			cur = nil
+		}
+	}
+	return
+}
+
+// callLine is a one-line description of a tool call, such as "edit src/a.go".
+func callLine(tc llama.ToolCall) string {
+	var a map[string]any
+	json.Unmarshal([]byte(tc.Function.Arguments), &a)
+	for _, k := range []string{"path", "command", "query", "pattern"} {
+		if v, _ := a[k].(string); v != "" {
+			return tc.Function.Name + ": " + clip(oneLine(v), clipArgs/4)
+		}
+	}
+	return tc.Function.Name
+}
+
+// lastNote is the text the assistant wrote before its latest tool call: the
+// system prompt makes it say what it is about to do.
+func lastNote(h []llama.ChatMessage) string {
+	for i := len(h) - 1; i >= 0; i-- {
+		if h[i].Role == "assistant" && h[i].Content != "" {
+			return clip(h[i].Content, clipArgs)
+		}
+	}
+	return ""
+}
+
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+func lastN(s []string, n int) []string {
+	if len(s) > n {
+		return s[len(s)-n:]
+	}
+	return s
+}
+
+func bullets(s []string) string {
+	if len(s) == 0 {
+		return "- (none)"
+	}
+	return "- " + strings.Join(s, "\n- ")
 }
 
 // clip cuts s to about n bytes, marking how much was dropped.

@@ -44,16 +44,7 @@ func fakeLlama(t *testing.T, summary string, fail bool, bodies *[]string) *llama
 		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": summary}}}})
 	}))
 	t.Cleanup(ts.Close)
-	srv := &llama.Server{Base: ts.URL}
-	prev := app.LoadServer
-	t.Cleanup(func() { app.LoadServer = prev })
-	app.LoadServer = func(path string) (*llama.Server, error) {
-		if path != config.CompactModel {
-			t.Errorf("compaction loaded %s", path)
-		}
-		return srv, nil
-	}
-	return srv
+	return &llama.Server{Base: ts.URL}
 }
 
 func compactApp(srv *llama.Server) *model.App {
@@ -91,7 +82,8 @@ func TestSlashCompactReplacesHistory(t *testing.T) {
 	if len(a.History) != 2 || a.History[0].Role != "user" || !strings.Contains(a.History[0].Content, "- goal: fix the parser") || a.History[1].Role != "assistant" {
 		t.Fatalf("history %+v", a.History)
 	}
-	if n := len(a.Entries); n != 1 || a.Entries[0].Kind != model.EntryNote || !strings.Contains(a.Entries[0].Content, "context compacted") {
+	if n := len(a.Entries); n != 2 || a.Entries[0].Kind != model.EntryNote || !strings.Contains(a.Entries[0].Content, "context compacted") ||
+		a.Entries[1].Kind != model.EntrySummary || !strings.Contains(a.Entries[1].Content, "- goal: fix the parser") {
 		t.Fatalf("entries %+v", a.Entries)
 	}
 	body := bodies[0]
@@ -148,6 +140,7 @@ func TestAutoCompactBetweenToolRounds(t *testing.T) {
 		t.Fatal("the kept exchange was also sent to the summarizer")
 	}
 	a = compactApp(fakeLlama(t, "- did stuff", false, &bodies))
+	a.Seen = map[string]bool{"read x": true}
 	a.History[3].Content = strings.Repeat("y", 7000)
 	a.TokenUsed = config.CompactAt
 	app.FinishCompact(a, app.RunNext(a)().(app.CompactDoneMsg))
@@ -156,6 +149,29 @@ func TestAutoCompactBetweenToolRounds(t *testing.T) {
 	}
 	if a.TokenUsed >= config.CompactAt {
 		t.Fatalf("TokenUsed %d not reset", a.TokenUsed)
+	}
+	if a.Seen != nil {
+		t.Fatal("repeat guard kept blocking reads after compaction")
+	}
+	first = a.History[0].Content
+	if !strings.Contains(first, "- bash: cat parser.go") || !strings.Contains(first, "YOUR LAST STEP") || !strings.Contains(first, "looking") {
+		t.Fatalf("oversized-tail summary lacks the ledger or last step: %s", first)
+	}
+}
+
+func TestLedgerSurvivesSecondCompaction(t *testing.T) {
+	var bodies []string
+	a := compactApp(fakeLlama(t, "- s1", false, &bodies))
+	app.FinishCompact(a, app.Compact(a, "", false, false)().(app.CompactDoneMsg))
+	a.History = append(a.History, llama.ChatMessage{Role: "user", Content: "now add tests"})
+	a.Request = "now add tests"
+	app.FinishCompact(a, app.Compact(a, "", false, false)().(app.CompactDoneMsg))
+	first := a.History[0].Content
+	if !strings.Contains(first, "- fix the parser") || !strings.Contains(first, "- now add tests") || !strings.Contains(first, "- bash: cat parser.go") {
+		t.Fatalf("ledger lost across compactions: %s", first)
+	}
+	if strings.Count(first, "- bash: cat parser.go") != 1 {
+		t.Fatalf("ledger duplicated: %s", first)
 	}
 }
 

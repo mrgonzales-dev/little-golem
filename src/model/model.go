@@ -28,7 +28,8 @@ const (
 	EntryUser EntryKind = iota
 	EntryAssistant
 	EntryTool
-	EntryNote // a divider line such as "context compacted"
+	EntryNote    // a divider line such as "context compacted"
+	EntrySummary // the text a compaction produced, shown under its divider
 )
 
 // Entry is one rendered line of chat history. Assistant entries may carry

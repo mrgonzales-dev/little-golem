@@ -112,16 +112,21 @@ func (s *Server) WaitReady() error {
 }
 
 // Complete runs one non-streaming, tool-free completion and returns the
-// reply text (reasoning excluded).
-func (s *Server) Complete(ctx context.Context, msgs []ChatMessage, maxTokens int) (string, error) {
-	body, _ := json.Marshal(map[string]any{
+// reply text (reasoning excluded). noThink turns the template's thinking
+// off so a background job does not wait through a reasoning pass.
+func (s *Server) Complete(ctx context.Context, msgs []ChatMessage, maxTokens int, noThink bool) (string, error) {
+	payload := map[string]any{
 		"messages":       msgs,
 		"stream":         false,
 		"temperature":    0.3,
 		"repeat_penalty": 1.1,
 		"max_tokens":     maxTokens,
 		"cache_prompt":   true,
-	})
+	}
+	if noThink {
+		payload["chat_template_kwargs"] = map[string]any{"enable_thinking": false}
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.Base+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
