@@ -84,6 +84,7 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case StreamDoneMsg:
 		FinishStream(m.App)
+		saveSession(m.App)
 		if m.Cancelled {
 			m.ToolAcc, m.Cancelled = nil, false
 			return m, nil
@@ -97,15 +98,19 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CompactDoneMsg:
-		return m, FinishCompact(m.App, msg)
+		cmd := FinishCompact(m.App, msg)
+		saveSession(m.App)
+		return m, cmd
 
 	case ModelSwitchedMsg:
 		FinishSwitch(m.App, msg)
+		saveSession(m.App)
 		return m, nil
 
 	case ExecDoneMsg:
 		m.Running = ""
 		RecordToolResult(m.App, msg.Call, msg.Content)
+		saveSession(m.App)
 		ui.RenderEntries(m.App)
 		return m, RunNext(m.App)
 

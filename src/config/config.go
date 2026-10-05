@@ -20,8 +20,8 @@ const (
 	CompactModel = "/home/mrg/models/little-golem/model/LFM2.5-1.2B-Instruct-Q4_K_M.gguf"
 
 	// CompactAt is the context size in tokens at which the history is
-	// compacted automatically: 90% of the window.
-	CompactAt = CtxSize * 9 / 10
+	// compacted automatically: 80% of the window.
+	CompactAt = CtxSize * 8 / 10
 )
 
 // Model is one selectable GGUF. Name is the short id used by /models and the

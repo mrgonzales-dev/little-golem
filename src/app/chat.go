@@ -48,6 +48,7 @@ func Send(m *model.App) tea.Cmd {
 	apiMsgs = append(apiMsgs, m.History...)
 	go m.Server.Stream(ctx, apiMsgs, m.EventsChan)
 
+	saveSession(m)
 	ui.RenderEntries(m)
 	return AwaitToken(m)
 }

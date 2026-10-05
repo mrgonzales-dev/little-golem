@@ -49,6 +49,11 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 			}
 			return Compact(m, strings.TrimSpace(rest), false, false), true
 		}
+		if text == "/new" {
+			m.Input.Reset()
+			NewSession(m)
+			return nil, true
+		}
 		if rest, ok := strings.CutPrefix(text, "/models"); ok && (rest == "" || rest[0] == ' ') {
 			m.Input.Reset()
 			return SwitchModel(m, strings.TrimSpace(rest)), true
