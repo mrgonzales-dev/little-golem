@@ -15,6 +15,8 @@ func Verb(m *model.App) string {
 	switch {
 	case m.Current != nil:
 		return "Awaiting approval"
+	case m.Compacting:
+		return "Compacting context"
 	case m.Running != "":
 		return "Running " + m.Running
 	}

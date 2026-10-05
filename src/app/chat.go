@@ -29,6 +29,8 @@ func Send(m *model.App) tea.Cmd {
 	m.VerbSeed = config.NewVerbSeed()
 	m.TurnDone, m.ReqTokens, m.Rounds = 0, 0, 0
 	m.Cancelled = false
+	m.Request = text
+	m.Seen, m.Repeats = nil, 0
 
 	m.History = append(m.History, llama.ChatMessage{Role: "user", Content: text})
 	m.Entries = append(m.Entries,
@@ -42,7 +44,7 @@ func Send(m *model.App) tea.Cmd {
 	m.EventsChan = make(chan llama.StreamEvent, 64)
 
 	apiMsgs := make([]llama.ChatMessage, 0, len(m.History)+1)
-	apiMsgs = append(apiMsgs, llama.ChatMessage{Role: "system", Content: config.SystemPrompt})
+	apiMsgs = append(apiMsgs, llama.ChatMessage{Role: "system", Content: config.Prompt()})
 	apiMsgs = append(apiMsgs, m.History...)
 	go m.Server.Stream(ctx, apiMsgs, m.EventsChan)
 
@@ -73,8 +75,8 @@ func AppendDelta(m *model.App, reasoning, content string, tool *llama.ToolDelta)
 }
 
 // ExecutePendingTools turns accumulated tool_call fragments into queued
-// pending calls and starts the queue. Bash (approval-requiring) calls
-// head the queue; read and other silent tools run immediately.
+// pending calls and starts the queue. Approval-requiring calls (bash,
+// edit, write) head the queue; read and other silent tools run immediately.
 func ExecutePendingTools(m *model.App) tea.Cmd {
 	if len(m.ToolAcc) == 0 {
 		return nil
@@ -183,7 +185,7 @@ func Continue(m *model.App) tea.Cmd {
 	})
 
 	apiMsgs := make([]llama.ChatMessage, 0, len(m.History)+1)
-	apiMsgs = append(apiMsgs, llama.ChatMessage{Role: "system", Content: config.SystemPrompt})
+	apiMsgs = append(apiMsgs, llama.ChatMessage{Role: "system", Content: config.Prompt()})
 	apiMsgs = append(apiMsgs, m.History...)
 	go m.Server.Stream(ctx, apiMsgs, m.EventsChan)
 
@@ -213,12 +215,12 @@ func FinishStream(m *model.App) {
 	ui.RenderEntries(m)
 }
 
-// Interrupt cancels an in-flight stream, if any.
+// Interrupt cancels an in-flight stream or compaction, if any.
 func Interrupt(m *model.App) {
-	if m.Busy && m.Cancel != nil {
+	if (m.Busy || m.Compacting) && m.Cancel != nil {
 		m.Cancel()
 		m.Cancel = nil
-		m.Cancelled = true
+		m.Cancelled = m.Busy
 		m.Notice = "interrupted"
 	}
 }

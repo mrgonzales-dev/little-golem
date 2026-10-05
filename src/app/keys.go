@@ -35,10 +35,19 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		Interrupt(m)
 		return nil, true
 	case "enter":
-		if strings.TrimSpace(m.Input.Value()) == "/super" {
+		text := strings.TrimSpace(m.Input.Value())
+		if text == "/super" {
 			m.Input.Reset()
 			toggleBypass(m)
 			return nil, true
+		}
+		if rest, ok := strings.CutPrefix(text, "/compact"); ok && (rest == "" || rest[0] == ' ') {
+			m.Input.Reset()
+			if !m.Ready || m.Working() {
+				m.Notice = "can't compact while the agent is working"
+				return nil, true
+			}
+			return Compact(m, strings.TrimSpace(rest), false, false), true
 		}
 		if m.Ready && !m.Working() {
 			return Send(m), true
@@ -187,12 +196,12 @@ func decide(m *model.App, d model.Decision) tea.Cmd {
 	return m.Reason.Focus()
 }
 
-// toggleBypass flips bypass mode, where bash runs without asking.
+// toggleBypass flips bypass mode, where bash, edit and write run without asking.
 func toggleBypass(m *model.App) {
 	m.Bypass = !m.Bypass
 	if m.Bypass {
-		m.Notice = "bypass mode on: bash runs without asking (shift+tab or /super to turn off)"
+		m.Notice = "bypass mode on: bash, edit and write run without asking (shift+tab or /super to turn off)"
 	} else {
-		m.Notice = "bypass mode off: bash asks first"
+		m.Notice = "bypass mode off: bash, edit and write ask first"
 	}
 }

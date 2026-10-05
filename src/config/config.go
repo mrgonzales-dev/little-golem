@@ -17,4 +17,8 @@ const (
 
 	// CtxSize is the llama.cpp context window in tokens.
 	CtxSize = 128000
+
+	// CompactAt is the context size in tokens at which the history is
+	// compacted automatically: half the window.
+	CompactAt = CtxSize / 2
 )

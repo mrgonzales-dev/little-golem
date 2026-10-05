@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -8,7 +9,42 @@ import (
 	"little-golem/src/model"
 )
 
-const maxCmdLines = 4
+const (
+	maxCmdLines  = 4
+	maxDiffLines = 14
+	maxPartLines = 5 // old/new lines shown per side of an edit
+)
+
+// approvalPreview returns the approval card heading and the body lines for
+// a pending call. Each body line starts with a two-character marker:
+// "$ " command, "+ " added, "- " removed, "  " plain.
+func approvalPreview(pc model.PendingCall) (string, []string) {
+	a := pc.Args()
+	switch pc.Name {
+	case "edit":
+		body := []string{"  " + a.Path}
+		body = append(body, prefixed("- ", a.OldString, maxPartLines)...)
+		return "Edit file?", append(body, prefixed("+ ", a.NewString, maxPartLines)...)
+	case "write":
+		n := strings.Count(a.Content, "\n") + min(1, len(a.Content))
+		body := []string{"  " + a.Path + " (" + strconv.Itoa(n) + " lines)"}
+		return "Write file?", append(body, prefixed("+ ", a.Content, maxPartLines+3)...)
+	}
+	return "Run " + pc.Name + " command?", []string{"$ " + pc.Command()}
+}
+
+// prefixed splits s into lines carrying prefix, capped at limit lines.
+func prefixed(prefix, s string, limit int) []string {
+	s = strings.ReplaceAll(strings.TrimSuffix(s, "\n"), "\t", "    ")
+	lines := strings.Split(s, "\n")
+	if len(lines) > limit {
+		lines = append(lines[:limit-1], "… +"+strconv.Itoa(len(lines)-limit+1)+" more lines")
+	}
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return lines
+}
 
 // bgEl returns a style on the approval card background.
 func bgEl() lipgloss.Style { return lipgloss.NewStyle().Background(UIBgEl) }
@@ -20,15 +56,35 @@ func ApprovalCard(m *model.App) string {
 	inner := max(1, m.Width-4) // thick left border (1) + padding (2) + 1 spare
 	line := func(st lipgloss.Style, s string) string { return st.Width(inner).Render(s) }
 
-	title := line(bgEl().Foreground(UIWarning).Bold(true), "Run "+m.Current.Name+" command?")
+	heading, body := approvalPreview(*m.Current)
+	rows := []string{line(bgEl().Foreground(UIWarning).Bold(true), heading)}
 
-	cmd := strings.Split(lipgloss.Wrap("$ "+m.Current.Command(), inner, ""), "\n")
-	if len(cmd) > maxCmdLines {
-		cmd = append(cmd[:maxCmdLines-1], "…")
+	limit := maxDiffLines
+	if m.Current.Name == "bash" {
+		limit = maxCmdLines
 	}
-	rows := []string{title}
-	for _, c := range cmd {
-		rows = append(rows, line(bgEl().Foreground(UIText), c))
+	type row struct {
+		st   lipgloss.Style
+		text string
+	}
+	var wrapped []row
+	for _, l := range body {
+		st := bgEl().Foreground(UIText)
+		switch l[:2] {
+		case "+ ":
+			st = bgEl().Foreground(UISuccess)
+		case "- ":
+			st = bgEl().Foreground(UIError)
+		}
+		for _, seg := range strings.Split(lipgloss.Wrap(l, inner, ""), "\n") {
+			wrapped = append(wrapped, row{st, seg})
+		}
+	}
+	if len(wrapped) > limit {
+		wrapped = append(wrapped[:limit-1], row{bgEl().Foreground(UIMuted), "…"})
+	}
+	for _, r := range wrapped {
+		rows = append(rows, line(r.st, r.text))
 	}
 
 	if m.Reasoning {

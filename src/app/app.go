@@ -91,7 +91,13 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.ToolAcc) > 0 {
 			return m, ExecutePendingTools(m.App)
 		}
+		if m.Err == nil && ShouldAutoCompact(m.App) {
+			return m, Compact(m.App, "", true, false)
+		}
 		return m, nil
+
+	case CompactDoneMsg:
+		return m, FinishCompact(m.App, msg)
 
 	case ExecDoneMsg:
 		m.Running = ""

@@ -126,6 +126,9 @@ func (f *fffIndex) Grep(a grepArgs) (string, error) {
 		after = *a.After
 	}
 
+	if f == nil {
+		return "", fmt.Errorf("search index is not running")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -182,22 +185,65 @@ func (f *fffIndex) Grep(a grepArgs) (string, error) {
 			b.WriteString("      " + C.GoString(ca) + "\n")
 		}
 	}
+	if n == 0 {
+		return "(no matches)\n", nil
+	}
 	return b.String(), nil
 }
 
-// ReadTool is the agent's native read capability over the fff index.
-type ReadTool struct{}
+// Glob lists indexed files whose path matches the glob pattern.
+func (f *fffIndex) Glob(pattern string, limit uint32) (string, error) {
+	if strings.TrimSpace(pattern) == "" {
+		return "", fmt.Errorf("empty pattern")
+	}
+	if f == nil {
+		return "", fmt.Errorf("search index is not running")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-// NewRead returns the read tool backed by the shared index.
-func NewRead() *ReadTool { return &ReadTool{} }
+	p := C.CString(pattern)
+	defer C.free(unsafe.Pointer(p))
 
-func (t *ReadTool) Name() string { return "read" }
+	res := C.fff_glob(f.h, p, nil, 0, 0, C.uint32_t(limit))
+	defer C.fff_free_result(res)
 
-func (t *ReadTool) Description() string {
-	return "Search the workspace's file CONTENTS for an identifier or text and return matching lines with file paths and line numbers. Pass a bare identifier (e.g. RenderEntries), optionally prefixed by a directory ('src/ queue') or glob ('*.go queue'). Plain text beats regex."
+	if msg := C.fff_result_get_error(res); msg != nil {
+		return "", fmt.Errorf("fff: glob: %s", C.GoString(msg))
+	}
+	sp := (*C.struct_FffSearchResult)(C.fff_result_get_handle(res))
+	if sp == nil {
+		return "(no matches)\n", nil
+	}
+	defer C.fff_free_search_result(sp)
+	if sp.count == 0 {
+		return "(no matches)\n", nil
+	}
+
+	var b strings.Builder
+	for i := 0; i < int(sp.count); i++ {
+		it := C.fff_search_result_get_item(sp, C.uint32_t(i))
+		b.WriteString(C.GoString(C.fff_file_item_get_relative_path(it)) + "\n")
+	}
+	if int(sp.total_matched) > int(sp.count) {
+		fmt.Fprintf(&b, "(showing %d of %d matches)\n", sp.count, sp.total_matched)
+	}
+	return b.String(), nil
 }
 
-func (t *ReadTool) Parameters() json.RawMessage {
+// GrepTool searches file contents over the fff index.
+type GrepTool struct{}
+
+// NewGrep returns the content-search tool backed by the shared index.
+func NewGrep() *GrepTool { return &GrepTool{} }
+
+func (t *GrepTool) Name() string { return "grep" }
+
+func (t *GrepTool) Description() string {
+	return "Search the workspace's file CONTENTS for an identifier or text and return only the matching lines, with file paths and line numbers. It does not return whole files; use read for that. Pass a bare identifier (e.g. RenderEntries), optionally prefixed by a directory ('src/ queue') or glob ('*.go queue'). Plain text beats regex."
+}
+
+func (t *GrepTool) Parameters() json.RawMessage {
 	return json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -210,12 +256,57 @@ func (t *ReadTool) Parameters() json.RawMessage {
 }`)
 }
 
-func (t *ReadTool) Run(ctx context.Context, raw json.RawMessage) (Result, error) {
+func (t *GrepTool) Run(ctx context.Context, raw json.RawMessage) (Result, error) {
 	a, err := parseGrepArgs(raw)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w (raw args: %s)", err, string(raw))
 	}
 	out, err := fffShared.Grep(a)
+	if err != nil {
+		return Result{}, err
+	}
+	return Result{Content: strings.TrimRight(out, "\n")}, nil
+}
+
+// GlobTool lists files by path pattern over the fff index.
+type GlobTool struct{}
+
+// NewGlob returns the file-listing tool backed by the shared index.
+func NewGlob() *GlobTool { return &GlobTool{} }
+
+func (t *GlobTool) Name() string { return "glob" }
+
+func (t *GlobTool) Description() string {
+	return "List files whose path matches a glob pattern, e.g. '*.go', 'src/**/*.py' or 'tests/*'. Use it to find files by name; use grep to search inside them and read to open one."
+}
+
+func (t *GlobTool) Parameters() json.RawMessage {
+	return json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "pattern":     {"type": "string", "description": "Glob pattern relative to the project folder, e.g. '**/*.go'."},
+    "max_results": {"type": "integer", "description": "Maximum paths returned (default 100)."}
+  },
+  "required": ["pattern"]
+}`)
+}
+
+func (t *GlobTool) Run(_ context.Context, raw json.RawMessage) (Result, error) {
+	var a struct {
+		Pattern    string `json:"pattern"`
+		MaxResults uint32 `json:"max_results"`
+	}
+	if err := parseArgs(raw, &a); err != nil {
+		if s := strings.Trim(strings.TrimSpace(string(raw)), `"`); s != "" && !strings.HasPrefix(s, "{") && s != "null" {
+			a.Pattern = s
+		} else {
+			return Result{}, err
+		}
+	}
+	if a.MaxResults == 0 {
+		a.MaxResults = 100
+	}
+	out, err := fffShared.Glob(a.Pattern, a.MaxResults)
 	if err != nil {
 		return Result{}, err
 	}

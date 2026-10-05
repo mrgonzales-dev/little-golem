@@ -27,6 +27,7 @@ const (
 	EntryUser EntryKind = iota
 	EntryAssistant
 	EntryTool
+	EntryNote // a divider line such as "context compacted"
 )
 
 // Entry is one rendered line of chat history. Assistant entries may carry
@@ -105,6 +106,8 @@ type App struct {
 
 	Entries []Entry
 	History []llama.ChatMessage
+	// Request is the user's message that started the current turn.
+	Request string
 
 	EventsChan chan llama.StreamEvent
 	Cancel     context.CancelFunc
@@ -122,7 +125,7 @@ type App struct {
 	ApprovalSel int
 	Reasoning   bool
 	Reason      textinput.Model
-	// Bypass runs approval-gated tools (bash) without asking.
+	// Bypass runs approval-gated tools (bash, edit, write) without asking.
 	Bypass bool
 	// Approved commands auto-run for the rest of the session after the
 	// user answers y once; Denied commands auto-skip after n.
@@ -150,6 +153,18 @@ type App struct {
 	Rounds    int    // model->tools round trips this turn
 	Running   string // name of the tool currently executing, if any
 	Cancelled bool   // the user interrupted the current turn
+
+	// Seen holds the read-only calls (read, grep, glob) already run since
+	// the last bash/edit/write; running one again cannot return anything
+	// new. Repeats counts consecutive blocked repeats.
+	Seen    map[string]bool
+	Repeats int
+
+	// Compacting is true while the history is being summarized.
+	// CompactFailed turns auto-compaction off after a failure, until a
+	// manual /compact succeeds.
+	Compacting    bool
+	CompactFailed bool
 
 	Err    error
 	Notice string
@@ -186,14 +201,10 @@ var Approvals = []Approval{
 	{"Deny with reason…", "r", DenyReason},
 }
 
-// MaxRounds caps model->tools round trips per user turn so a small model
-// cannot loop on tool calls forever.
-const MaxRounds = 12
-
 // Working reports whether the agent is mid-turn: streaming, waiting for
-// tool approval, or executing a tool.
+// tool approval, executing a tool, or compacting.
 func (m *App) Working() bool {
-	return m.Busy || m.Current != nil || m.Running != ""
+	return m.Busy || m.Current != nil || m.Running != "" || m.Compacting
 }
 
 // TurnTokens is the running completion-token count for the current turn.
@@ -228,29 +239,49 @@ type PendingCall struct {
 	CallIndex string // streamed index string; used for the call_ ID
 }
 
+// CallArgs is the union of the arguments the tools take.
+type CallArgs struct {
+	Command   string `json:"command"`
+	Query     string `json:"query"`
+	Path      string `json:"path"`
+	Content   string `json:"content"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+}
+
+// Args decodes the call's arguments; fields that do not parse stay empty.
+func (p PendingCall) Args() CallArgs {
+	var a CallArgs
+	_ = json.Unmarshal([]byte(p.Arguments), &a)
+	return a
+}
+
 // Summary is what the call is about, for display: the bash command, the
-// search query, or the raw arguments when neither parses.
+// search query, the file path, or the raw arguments when none parse.
 func (p PendingCall) Summary() string {
-	var a struct {
-		Command string `json:"command"`
-		Query   string `json:"query"`
-	}
-	if json.Unmarshal([]byte(p.Arguments), &a) == nil {
-		if a.Command != "" {
-			return a.Command
-		}
-		if a.Query != "" {
-			return a.Query
+	a := p.Args()
+	for _, s := range []string{a.Command, a.Query, a.Path} {
+		if s != "" {
+			return s
 		}
 	}
 	return strings.TrimSpace(p.Arguments)
 }
 
+// Key identifies the call for session allow/deny memory: the command for
+// bash, the whole call for tools that act on files.
+func (p PendingCall) Key() string {
+	if p.Name == "bash" {
+		return p.Command()
+	}
+	return p.Name + " " + p.Arguments
+}
+
 // PartialSummary is Summary for a call whose arguments are still
-// streaming: it pulls the "command" or "query" string out of incomplete
-// JSON, so the text can be shown as the model writes it.
+// streaming: it pulls the "command", "query" or "path" string out of
+// incomplete JSON, so the text can be shown as the model writes it.
 func PartialSummary(args string) string {
-	for _, key := range []string{"command", "query"} {
+	for _, key := range []string{"command", "query", "path"} {
 		if s, ok := partialJSONString(args, key); ok {
 			return s
 		}
@@ -317,11 +348,8 @@ func (p PendingCall) Index() int {
 // Command returns the bash command carried in the arguments JSON, falling
 // back to the raw arguments when parsing fails.
 func (p PendingCall) Command() string {
-	var a struct {
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal([]byte(p.Arguments), &a); err == nil && a.Command != "" {
-		return a.Command
+	if c := p.Args().Command; c != "" {
+		return c
 	}
 	return p.Arguments
 }

@@ -11,24 +11,45 @@ import (
 	"little-golem/src/ui"
 )
 
+const (
+	maxRepeats   = 3
+	repeatNotice = "You already ran this exact call and nothing has changed since, so the result would be the same. Use the earlier result, try different arguments, or answer the user."
+)
+
 // RunNext pops the next pending call: silent tools and commands the user
 // already approved run at once; gated commands the user denied skip at
 // once; the rest surface the confirmation prompt. The queue drains before
 // the model continues.
 func RunNext(m *model.App) tea.Cmd {
 	if len(m.Pending) == 0 {
-		if m.Rounds >= model.MaxRounds {
-			m.Notice = "stopped: too many tool rounds, send a message to continue"
-			return nil
+		// All calls resolved: hand the transcript back to the model,
+		// compacting first if the context has filled up.
+		if ShouldAutoCompact(m) {
+			return Compact(m, "", true, true)
 		}
-		// All calls resolved: hand the transcript back to the model.
 		return Continue(m)
 	}
 	pc := m.Pending[0]
 	m.Pending = m.Pending[1:]
 
-	// Ungated tools (read) run inline; they are quick.
+	// Ungated tools (read, grep, glob) run inline; they are quick.
 	if !m.Tools.NeedsApproval(pc.Name) {
+		sig := pc.Name + " " + pc.Arguments
+		if m.Seen[sig] {
+			m.Repeats++
+			RecordToolResult(m, pc, repeatNotice)
+			ui.RenderEntries(m)
+			if m.Repeats >= maxRepeats {
+				m.Pending = nil
+				m.Notice = "stopped: the model kept repeating the same call, send a message to continue"
+				return nil
+			}
+			return RunNext(m)
+		}
+		if m.Seen == nil {
+			m.Seen = map[string]bool{}
+		}
+		m.Seen[sig], m.Repeats = true, 0
 		res := m.Tools.Execute(context.Background(), tools.Call{Name: pc.Name, Arguments: json.RawMessage(pc.Arguments)})
 		RecordToolResult(m, pc, res.Content)
 		ui.RenderEntries(m)
@@ -36,10 +57,10 @@ func RunNext(m *model.App) tea.Cmd {
 	}
 	// Bypass mode or a session approval: run without asking, off the UI
 	// goroutine since shell commands can take a while.
-	if m.Bypass || m.Approved[pc.Command()] {
+	if m.Bypass || m.Approved[pc.Key()] {
 		return execAsync(m, pc, true, "")
 	}
-	if m.Denied[pc.Command()] {
+	if m.Denied[pc.Key()] {
 		RecordToolResult(m, pc, "the user denied this command")
 		ui.RenderEntries(m)
 		return RunNext(m)
@@ -68,9 +89,9 @@ func BashConfirm(m *model.App, d model.Decision, reason string) tea.Cmd {
 	yes := d == model.AllowOnce || d == model.AllowSession
 	switch d {
 	case model.AllowSession:
-		m.Approved[pc.Command()] = true
+		m.Approved[pc.Key()] = true
 	case model.Deny:
-		m.Denied[pc.Command()] = true
+		m.Denied[pc.Key()] = true
 	}
 	ui.Layout(m)
 	return execAsync(m, pc, yes, reason)
@@ -84,6 +105,7 @@ func execAsync(m *model.App, pc model.PendingCall, yes bool, reason string) tea.
 		denied += ": " + reason
 	}
 	if yes {
+		m.Seen, m.Repeats = nil, 0 // the call may change what reads return
 		m.Running = pc.Name
 		StartToolEntry(m, pc)
 		ui.RenderEntries(m)

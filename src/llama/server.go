@@ -107,6 +107,47 @@ func (s *Server) WaitReady() error {
 	return fmt.Errorf("timed out waiting for llama-server (log: %s)", s.LogFile.Name())
 }
 
+// Complete runs one non-streaming, tool-free completion and returns the
+// reply text (reasoning excluded).
+func (s *Server) Complete(ctx context.Context, msgs []ChatMessage, maxTokens int) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"messages":       msgs,
+		"stream":         false,
+		"temperature":    0.3,
+		"repeat_penalty": 1.1,
+		"max_tokens":     maxTokens,
+		"cache_prompt":   true,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.Base+"/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
+		return "", fmt.Errorf("llama-server: %s", strings.TrimSpace(string(raw)))
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("llama-server: empty response")
+	}
+	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+}
+
 // Stream posts the chat history and pushes decoded SSE chunks into out.
 // The channel is closed when the stream ends, errors, or ctx is canceled.
 func (s *Server) Stream(ctx context.Context, history []ChatMessage, out chan<- StreamEvent) {

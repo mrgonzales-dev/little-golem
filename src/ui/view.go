@@ -81,6 +81,9 @@ func RenderEntries(m *model.App) {
 		case model.EntryTool:
 			RenderTool(&b, e, w, m.ShowTools)
 			b.WriteString("\n\n")
+		case model.EntryNote:
+			b.WriteString(UIHintStyle.Render("── " + e.Content + " ──"))
+			b.WriteString("\n\n")
 		}
 	}
 
