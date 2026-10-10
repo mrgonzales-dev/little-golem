@@ -28,6 +28,7 @@ func NewSession(m *model.App) {
 	m.History, m.Entries, m.Request = nil, nil, ""
 	m.TokenUsed, m.CompactFailed, m.Err = 0, false, nil
 	m.Approved, m.Denied, m.Seen = map[string]bool{}, map[string]bool{}, nil
+	m.ClearSelection() // content lines are gone
 	m.Notice = "new session"
 	ui.RenderEntries(m)
 }

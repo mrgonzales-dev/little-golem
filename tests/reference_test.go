@@ -109,15 +109,54 @@ func TestSendAttachesReferencedFiles(t *testing.T) {
 	}
 }
 
-func TestSendOutsideProjectIsNotAttached(t *testing.T) {
+func TestPickerKeepsSpacesAndInsertsQuotes(t *testing.T) {
+	queries := fakeFinder(t, "my file.txt")
+	var bodies []string
+	a := compactApp(fakeLlama(t, "s", false, &bodies))
+
+	typeKeys(a, `@"my `)
+	if len(a.Refs) != 1 || (*queries)[len(*queries)-1] != "my " {
+		t.Fatalf("picker query: %v queries %v", a.Refs, *queries)
+	}
+
+	app.HandleKey(a, tea.KeyPressMsg{Code: tea.KeyTab})
+	if got := a.Input.Value(); got != `@"my file.txt" ` {
+		t.Fatalf("input %q", got)
+	}
+}
+
+func TestSendOutsideProjectIsAttached(t *testing.T) {
 	inTempProject(t)
 	var bodies []string
 	a := compactApp(fakeLlama(t, "s", false, &bodies))
 	a.History = nil
-	a.Input.SetValue("see @/etc/passwd")
+	a.Input.SetValue("see @/etc/hostname")
 	app.Send(a)
-	if strings.Contains(a.History[0].Content, "<file") || !strings.Contains(a.Notice, "not found") {
+	if !strings.Contains(a.History[0].Content, "<file") || a.Notice != "" {
 		t.Fatalf("%q / %q", a.History[0].Content, a.Notice)
+	}
+}
+
+func TestSendQuotedReferenceWithSpaces(t *testing.T) {
+	dir := inTempProject(t)
+	name := "SweldoMo DTR Export - Sample.txt"
+	os.WriteFile(filepath.Join(dir, name), []byte("hello holiday\n"), 0o644)
+	var bodies []string
+	a := compactApp(fakeLlama(t, "s", false, &bodies))
+	a.History = nil
+
+	a.Input.SetValue(`explain @"` + name + `" please`)
+	app.Send(a)
+
+	sent := a.History[0].Content
+	if !strings.Contains(sent, `<file path="`+name+`">`) || !strings.Contains(sent, "hello holiday") {
+		t.Fatalf("message: %q", sent)
+	}
+	if n := a.Entries[1]; n.Kind != model.EntryNote || n.Content != `attached @"`+name+`"` {
+		t.Fatalf("note %+v", n)
+	}
+	if a.Notice != "" {
+		t.Fatalf("notice %q", a.Notice)
 	}
 }
 

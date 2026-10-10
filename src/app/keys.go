@@ -34,8 +34,20 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 		toggleBypass(m)
 		return nil, true
 	case "ctrl+c":
+		// opencode: ctrl+c copies the selection like normal instead of
+		// quitting. The next ctrl+c follows the usual quit flow.
+		if _, ok := ui.SelectedText(m); ok {
+			cmd := CopySelection(m)
+			ui.RenderEntries(m)
+			return cmd, true
+		}
 		return handleCtrlC(m), true
 	case "esc":
+		if m.SelActive {
+			m.ClearSelection()
+			ui.RenderEntries(m)
+			return nil, true
+		}
 		Interrupt(m)
 		return nil, true
 	case "enter":
@@ -69,6 +81,11 @@ func HandleKey(m *model.App, msg tea.KeyPressMsg) (tea.Cmd, bool) {
 	case "ctrl+m":
 		return SwitchModel(m, ""), true
 	case "ctrl+y":
+		if _, ok := ui.SelectedText(m); ok {
+			cmd := CopySelection(m)
+			ui.RenderEntries(m)
+			return cmd, true
+		}
 		if reply, ok := LastReply(m); ok {
 			m.Notice = "copied reply"
 			return tea.SetClipboard(reply), true
@@ -114,13 +131,19 @@ func handleCtrlC(m *model.App) tea.Cmd {
 
 // Scroll moves the transcript for wheel and paging keys, like opencode's
 // chat list: scrolling up always drops Follow, and reaching the bottom
-// again re-arms it so new output keeps the view pinned. Mouse clicks and
-// drags are ignored.
+// again re-arms it so new output keeps the view pinned. Mouse clicks,
+// releases and drags drive the in-app selection (see selection.go).
 func Scroll(m *model.App, msg tea.Msg) (tea.Cmd, bool) {
 	vp := &m.Viewport
 	switch msg := msg.(type) {
 	case tea.MouseWheelMsg:
 		*vp, _ = vp.Update(msg)
+	case tea.MouseClickMsg:
+		return SelectClick(m, msg)
+	case tea.MouseReleaseMsg:
+		return SelectRelease(m, msg)
+	case tea.MouseMotionMsg:
+		return SelectDrag(m, msg)
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "pgup":

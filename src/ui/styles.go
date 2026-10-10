@@ -68,6 +68,21 @@ var (
 	UIBodyBlock = lipgloss.NewStyle().
 			Background(UIBg).
 			Padding(0, 2)
+
+	// UISelectStyle highlights lines covered by the in-app selection
+	// (opencode copy-mode style: selected rows lose markdown colors and
+	// render as plain highlighted text so the copy target is obvious).
+	UISelectStyle = lipgloss.NewStyle().
+			Foreground(UIText).
+			Background(lipgloss.Color("#2e2e2e"))
+
+	// UIToastStyle is the transient top-right confirmation box.
+	UIToastStyle = lipgloss.NewStyle().
+			Foreground(UISuccess).
+			Background(UIBgEl).
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(UISuccess).
+			Padding(0, 1)
 )
 
 // InputStyles paints the textarea onto the opencode-style dark panel.

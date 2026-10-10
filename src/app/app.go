@@ -4,6 +4,8 @@
 package app
 
 import (
+	"os"
+
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 
@@ -22,6 +24,9 @@ type TokenMsg llama.StreamEvent
 
 type StreamDoneMsg struct{}
 
+// ClearToastMsg dismisses the transient toast overlay.
+type ClearToastMsg struct{}
+
 // M wraps *model.App so that Bubble Tea methods (Init/Update/View) live on
 // a type owned by this package, while the shared state stays in model.
 type M struct{ *model.App }
@@ -36,7 +41,21 @@ func New(srv *llama.Server) *M {
 		Approved: map[string]bool{},
 		Denied:   map[string]bool{},
 		Follow:   true,
+		// opencode tui.mouse: mouse capture defaults on; set
+		// LITTLE_GOLEM_DISABLE_MOUSE=1 (or OPENCODE_DISABLE_MOUSE=1)
+		// to keep the terminal's native selection/scrolling.
+		MouseEnabled: mouseEnabled(),
 	}}
+}
+
+// mouseEnabled reports whether mouse reporting should be on.
+func mouseEnabled() bool {
+	for _, k := range []string{"LITTLE_GOLEM_DISABLE_MOUSE", "OPENCODE_DISABLE_MOUSE"} {
+		if v := os.Getenv(k); v == "1" || v == "true" || v == "yes" {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *M) Init() tea.Cmd {
@@ -113,6 +132,10 @@ func (m *M) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		saveSession(m.App)
 		ui.RenderEntries(m.App)
 		return m, RunNext(m.App)
+
+	case ClearToastMsg:
+		m.Toast = ""
+		return m, nil
 
 	case spinner.TickMsg:
 		// The tick chain never stops; View reads the frame, so no

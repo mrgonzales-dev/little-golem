@@ -155,6 +155,18 @@ type App struct {
 	// on new turns and cleared when the user scrolls up, mirroring
 	// opencode's AtBottom-gated auto-scroll.
 	Follow bool
+	// MouseEnabled gates mouse reporting (opencode tui.mouse). When true
+	// the app receives clicks/drags/wheel; drags become an in-app
+	// selection. When false the terminal keeps native selection/scroll.
+	MouseEnabled bool
+
+	// SelActive marks an opencode-style in-app line selection over the
+	// transcript content lines. SelDragging is true while the left button
+	// is held; SelAnchor/SelFocus are content line indexes.
+	SelActive   bool
+	SelDragging bool
+	SelAnchor   int
+	SelFocus    int
 	// TokenUsed is the last reported prompt+completion token count, i.e.
 	// the context currently in use.
 	TokenUsed int
@@ -192,11 +204,45 @@ type App struct {
 	Err    error
 	Notice string
 
+	// Toast is a transient top-right confirmation (e.g. copy feedback),
+	// visible for ToastDuration after ToastAt.
+	Toast   string
+	ToastAt time.Time
+
 	// ConfirmQuit is set when the second ctrl+c has armed a pending quit;
 	// the next ctrl+c actually quits. The transient banner comes from
 	// ConfirmQuitNotice, which is cleared by any other keypress.
 	ConfirmQuit       bool
 	ConfirmQuitNotice string
+}
+
+// SelRange returns the normalized selected content line range. ok is
+// false when no selection exists.
+func (m *App) SelRange() (lo, hi int, ok bool) {
+	if !m.SelActive {
+		return 0, 0, false
+	}
+	lo, hi = m.SelAnchor, m.SelFocus
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	return lo, hi, true
+}
+
+// ClearSelection drops any in-app selection.
+func (m *App) ClearSelection() {
+	m.SelActive, m.SelDragging = false, false
+}
+
+// ToastDuration is how long a toast stays on screen.
+const ToastDuration = 2 * time.Second
+
+// ToastVisible reports whether the toast should still be drawn.
+func (m *App) ToastVisible() bool {
+	return m.Toast != "" && time.Since(m.ToastAt) < ToastDuration
 }
 
 // Decision is the user's answer to a bash approval prompt.

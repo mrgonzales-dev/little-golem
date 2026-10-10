@@ -1,17 +1,13 @@
 package app
 
 import (
-	"context"
-	"encoding/json"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
-	"little-golem/src/config"
 	"little-golem/src/model"
 	"little-golem/src/tools"
 )
@@ -28,9 +24,11 @@ const (
 // replace it.
 var FindPaths = tools.FindPaths
 
-var refRe = regexp.MustCompile(`(?:^|\s)@(\S+)`)
+var refRe = regexp.MustCompile(`(?:^|\s)@(?:"([^"]+)"?|'([^']+)'?|(\S+))`)
 
-// refToken is the @word that ends at the cursor, or "".
+// refToken is the @reference under the cursor, or "". Quoted references
+// (@"my file... / @'my file...) may contain spaces while typed; bare
+// @words still end at whitespace.
 func refToken(m *model.App) string {
 	lines := strings.Split(m.Input.Value(), "\n")
 	if m.Input.Line() >= len(lines) {
@@ -38,14 +36,41 @@ func refToken(m *model.App) string {
 	}
 	r := []rune(lines[m.Input.Line()])
 	end := min(m.Input.Column(), len(r))
-	start := end
-	for start > 0 && !unicode.IsSpace(r[start-1]) {
-		start--
+	// Find the last @ starting a token before the cursor.
+	at := -1
+	for i := end - 1; i >= 0 && i >= end-512; i-- {
+		if r[i] == '@' && (i == 0 || unicode.IsSpace(r[i-1])) {
+			at = i
+			break
+		}
 	}
-	if tok := string(r[start:end]); strings.HasPrefix(tok, "@") {
+	if at < 0 {
+		return ""
+	}
+	tok := string(r[at:end])
+	if len(tok) >= 2 && (tok[1] == '"' || tok[1] == '\'') {
+		// Quoted reference: spaces are part of the token while open.
+		// A closer before the cursor means the reference is done.
+		if strings.ContainsRune(tok[2:], rune(tok[1])) {
+			return ""
+		}
 		return tok
 	}
-	return ""
+	if strings.ContainsAny(tok, " \t") {
+		return ""
+	}
+	return tok
+}
+
+// refQuery strips the @-prefix (and opening quote) for the fuzzy finder.
+func refQuery(tok string) string {
+	if strings.HasPrefix(tok, "@\"") || strings.HasPrefix(tok, "@'") {
+		q := tok[2:]
+		// Drop a trailing closer if the cursor sits after it.
+		q = strings.TrimSuffix(strings.TrimSuffix(q, "\""), "'")
+		return q
+	}
+	return strings.TrimPrefix(tok, "@")
 }
 
 // RefreshRefs updates the file picker for the word under the cursor.
@@ -60,7 +85,7 @@ func RefreshRefs(m *model.App) {
 	}
 	if tok != m.RefTok {
 		m.RefTok, m.RefSel = tok, 0
-		m.Refs = FindPaths(tok[1:], refRows)
+		m.Refs = FindPaths(refQuery(tok), refRows)
 	}
 }
 
@@ -79,7 +104,15 @@ func handleRefKey(m *model.App, key string) bool {
 		for range len([]rune(m.RefTok)) {
 			m.Input, _ = m.Input.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 		}
-		m.Input.InsertString("@" + path)
+		if strings.HasSuffix(path, "/") && strings.ContainsAny(path, " \t\"'") {
+			// Folder with spaces: keep it open (no closer) so the
+			// picker can drill deeper.
+			m.Input.InsertString("@\"" + path)
+		} else if strings.ContainsAny(path, " \t\"'") {
+			m.Input.InsertString("@\"" + path + "\"")
+		} else {
+			m.Input.InsertString("@" + path)
+		}
 		if !strings.HasSuffix(path, "/") {
 			m.Input.InsertString(" ")
 		}
@@ -94,7 +127,10 @@ func handleRefKey(m *model.App, key string) bool {
 
 // expandRefs appends the contents of every file and the listing of every
 // folder @-referenced in text, within a size budget, so the model sees
-// them without a read call. It returns the message to send, the
+// them without a read call. Quoted references (@"my file.xlsx") may contain
+// spaces; bare @words end at whitespace as before. Paths resolve without
+// the workspace jail (absolute and ~/... allowed) since @ is explicit user
+// intent, but this stays read-only. It returns the message to send, the
 // references attached and those that could not be read.
 func expandRefs(text string) (string, []string, []string) {
 	var b strings.Builder
@@ -102,23 +138,32 @@ func expandRefs(text string) (string, []string, []string) {
 	var attached, missing []string
 	seen := map[string]bool{}
 	budget := refTotalBytes
-	rd := tools.NewRead()
 	for _, mt := range refRe.FindAllStringSubmatch(text, -1) {
-		ref := strings.TrimRight(mt[1], ".,;:!?)]}\"'")
+		var ref, label string
+		switch {
+		case mt[1] != "":
+			ref = strings.TrimSpace(mt[1])
+			label = "@\"" + ref + "\""
+		case mt[2] != "":
+			ref = strings.TrimSpace(mt[2])
+			label = "@\"" + ref + "\""
+		default:
+			ref = strings.TrimRight(mt[3], ".,;:!?)]}\"'")
+			label = "@" + ref
+		}
 		if ref == "" || seen[ref] {
 			continue
 		}
 		seen[ref] = true
-		args, _ := json.Marshal(map[string]any{"path": ref, "limit": refLines})
-		res, err := rd.Run(context.Background(), args)
+		res, abs, err := tools.ReadAny(ref, refLines)
 		if err != nil {
-			missing = append(missing, "@"+ref)
+			missing = append(missing, label)
 			continue
 		}
 		if len(attached) == 0 {
 			b.WriteString("\n\nFiles and folders the user referenced with @ (already read for you):")
 		}
-		attached = append(attached, "@"+ref)
+		attached = append(attached, label)
 		body, room := res.Content, min(refFileBytes, budget)
 		switch {
 		case room <= 0:
@@ -128,7 +173,7 @@ func expandRefs(text string) (string, []string, []string) {
 		}
 		budget -= len(body)
 		kind := "file"
-		if st, err := os.Stat(filepath.Join(config.WorkDir, ref)); err == nil && st.IsDir() {
+		if st, err := os.Stat(abs); err == nil && st.IsDir() {
 			kind = "folder"
 		}
 		b.WriteString("\n\n<" + kind + " path=\"" + ref + "\">\n" + body + "\n</" + kind + ">")

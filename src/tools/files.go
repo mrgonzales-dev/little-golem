@@ -11,6 +11,60 @@ import (
 	"little-golem/src/config"
 )
 
+// expandHome expands a leading "~" or "~/" to the user's home directory.
+func expandHome(p string) string {
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			if p == "~" {
+				return home
+			}
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
+}
+
+// resolveAny maps a user-supplied @-reference to an absolute path without
+// enforcing the workspace jail. It still cleans the path and resolves
+// symlinks of the deepest existing ancestor. Read-only: only expandRefs
+// uses it; the read/edit/write tools stay jailed via resolve.
+func resolveAny(p string) (string, error) {
+	p = strings.TrimSpace(expandHome(p))
+	if p == "" {
+		return "", fmt.Errorf("missing path")
+	}
+	if !filepath.IsAbs(p) {
+		root := config.WorkDir
+		if root == "" {
+			var err error
+			if root, err = os.Getwd(); err != nil {
+				return "", err
+			}
+		}
+		p = filepath.Join(root, p)
+	}
+	p = filepath.Clean(p)
+	head, tail := p, ""
+	for {
+		if _, err := os.Lstat(head); err == nil {
+			break
+		}
+		parent := filepath.Dir(head)
+		if parent == head {
+			break
+		}
+		tail = filepath.Join(filepath.Base(head), tail)
+		head = parent
+	}
+	if head, err := filepath.EvalSymlinks(head); err == nil {
+		p = filepath.Join(head, tail)
+	}
+	return p, nil
+}
+
+// ResolveAny is the exported workspace-unjailed resolver for @-references.
+func ResolveAny(p string) (string, error) { return resolveAny(p) }
+
 // resolve maps a model-supplied path to an absolute path inside the
 // workspace, following symlinks so a link cannot lead outside it.
 func resolve(p string) (string, error) {

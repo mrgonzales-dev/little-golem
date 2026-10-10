@@ -72,33 +72,48 @@ func (t *ReadTool) Run(_ context.Context, raw json.RawMessage) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	return readAbs(abs, a.Path, a.Offset, a.Limit)
+}
+
+// ReadAny reads a user-supplied @-reference without the workspace jail,
+// so absolute paths and ~/... outside the project still attach. It returns
+// the result plus the resolved absolute path for folder detection.
+func ReadAny(path string, limit int) (Result, string, error) {
+	abs, err := resolveAny(path)
+	if err != nil {
+		return Result{}, "", err
+	}
+	res, err := readAbs(abs, path, 1, limit)
+	return res, abs, err
+}
+
+func readAbs(abs, shown string, offset, limit int) (Result, error) {
 	st, err := os.Stat(abs)
 	if err != nil {
-		return Result{}, fmt.Errorf("cannot read %s: %v (use glob to find files)", a.Path, err)
+		return Result{}, fmt.Errorf("cannot read %s: %v (use glob to find files)", shown, err)
 	}
 	if st.IsDir() {
-		return listDir(abs, a.Path)
+		return listDir(abs, shown)
 	}
 	if st.Size() > readMaxFile {
-		return Result{}, fmt.Errorf("%s is %d bytes, too large to read; use grep to search it", a.Path, st.Size())
+		return Result{}, fmt.Errorf("%s is %d bytes, too large to read; use grep to search it", shown, st.Size())
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		return Result{}, err
 	}
 	if bytes.IndexByte(data[:min(len(data), 8000)], 0) >= 0 {
-		return Result{}, fmt.Errorf("%s looks like a binary file", a.Path)
+		return Result{}, fmt.Errorf("%s looks like a binary file", shown)
 	}
 	if len(data) == 0 {
 		return Result{Content: "(empty file)"}, nil
 	}
 
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	start := max(a.Offset, 1)
+	start := max(offset, 1)
 	if start > len(lines) {
-		return Result{}, fmt.Errorf("offset %d is past the end of %s (%d lines)", start, a.Path, len(lines))
+		return Result{}, fmt.Errorf("offset %d is past the end of %s (%d lines)", start, shown, len(lines))
 	}
-	limit := a.Limit
 	if limit <= 0 {
 		limit = readDefaultLimit
 	}

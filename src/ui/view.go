@@ -127,6 +127,10 @@ func RenderEntries(m *model.App) {
 		Height(m.Viewport.Height()).
 		Render(b.String())
 
+	// Overlay the in-app selection, if any, before handing the content
+	// to the viewport so streaming keeps the highlight.
+	painted = ApplySelection(painted, m)
+
 	m.Viewport.SetContent(painted)
 	// Stick to the latest output only while following. Scrolling up clears
 	// Follow (see app.Scroll), so history stays put while the agent works.
@@ -226,9 +230,20 @@ func View(m *model.App) tea.View {
 		header,
 	)
 
+	// Transient top-right confirmation (e.g. copy feedback).
+	if m.ToastVisible() {
+		screen = OverlayToast(m.Width, screen, m.Toast)
+	}
+
 	v := tea.NewView(screen)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	// opencode tui.mouse: when disabled the terminal keeps its native
+	// selection/scrolling behavior instead of reporting to the app.
+	if m.MouseEnabled {
+		v.MouseMode = tea.MouseModeCellMotion
+	} else {
+		v.MouseMode = tea.MouseModeNone
+	}
 	v.WindowTitle = "little-golem"
 	v.BackgroundColor = UIBg
 	return v
