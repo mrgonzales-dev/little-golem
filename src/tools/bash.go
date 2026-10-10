@@ -7,10 +7,43 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"little-golem/src/config"
 )
+
+// cappedBuffer is a memory-bounding writer: it keeps the first cap bytes
+// and drops the rest, remembering that it overflowed.
+type cappedBuffer struct {
+	mu       sync.Mutex
+	data     []byte
+	cap      int
+	overflow bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	room := b.cap - len(b.data)
+	if room <= 0 {
+		b.overflow = true
+		return len(p), nil // discard, report success so the command continues
+	}
+	if len(p) > room {
+		b.data = append(b.data, p[:room]...)
+		b.overflow = true
+		return len(p), nil
+	}
+	b.data = append(b.data, p...)
+	return len(p), nil
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return string(b.data)
+}
 
 // BashTool runs a shell command after the user approves it.
 type BashTool struct {
@@ -75,8 +108,17 @@ func (t *BashTool) Run(ctx context.Context, raw json.RawMessage) (Result, error)
 	// the model bash already runs there, and this keeps it true even if
 	// the process cwd was changed.
 	cmd.Dir = config.WorkDir
-	out, err := cmd.CombinedOutput()
-	content := strings.TrimRight(string(out), "\n")
+	// Bound memory before the context-budget cut: raw capture stops at
+	// BashRawMaxBytes so a runaway command cannot OOM us; the model only
+	// ever sees ToolMaxChars via the budget gate in Execute.
+	var buf cappedBuffer
+	buf.cap = config.BashRawMaxBytes
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	err = cmd.Run()
+	content := strings.TrimRight(buf.String(), "\n")
+	if buf.overflow {
+		content += fmt.Sprintf("\n… [raw output exceeded %d bytes; showing the first %d]", config.BashRawMaxBytes, len(buf.data))
+	}
 	if runCtx.Err() != nil {
 		content = strings.TrimSpace(content) + fmt.Sprintf("\n(timed out after %gs, exit 124)", a.Timeout)
 	}

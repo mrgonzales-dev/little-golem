@@ -176,12 +176,18 @@ func RecordToolResult(m *model.App, pc model.PendingCall, content string) {
 		ToolCallID: fmt.Sprintf("call_%s", pc.CallIndex),
 		Name:       pc.Name,
 	})
+	syncTokenEstimate(m)
 }
 
 // Continue sends a follow-up completion carrying the accumulated history,
 // including tool results. A fresh streaming assistant entry receives the
-// next turn.
+// next turn. When the queued history alone already fills the window (e.g.
+// several capped tool results in one round), it compacts first instead of
+// sending an oversized request.
 func Continue(m *model.App) tea.Cmd {
+	if ShouldAutoCompact(m) {
+		return Compact(m, "", true, true)
+	}
 	m.Rounds++
 	ctx, cancel := context.WithCancel(context.Background())
 	m.Busy = true

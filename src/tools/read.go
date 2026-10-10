@@ -8,15 +8,19 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"little-golem/src/config"
 )
 
 const (
 	readDefaultLimit = 250
 	readMaxLimit     = 1000
 	readMaxLineLen   = 500
-	readMaxBytes     = 40_000
-	readMaxFile      = 10 << 20
-	readMaxDirItems  = 200
+	// readBodyMax leaves headroom inside the tool budget for the footer
+	// ("showing lines…"/"end of file") plus the Execute truncation notice.
+	readBodyMax     = config.ToolMaxChars - 1000
+	readMaxFile     = 10 << 20
+	readMaxDirItems = 200
 )
 
 // ReadTool returns the contents of a file (or the entries of a folder).
@@ -103,7 +107,7 @@ func (t *ReadTool) Run(_ context.Context, raw json.RawMessage) (Result, error) {
 	width := len(strconv.Itoa(len(lines)))
 	var b strings.Builder
 	n := start - 1
-	for ; n < len(lines) && n-start+1 < limit && b.Len() < readMaxBytes; n++ {
+	for ; n < len(lines) && n-start+1 < limit && b.Len() < readBodyMax; n++ {
 		line := strings.TrimSuffix(lines[n], "\r")
 		if len(line) > readMaxLineLen {
 			line = strings.ToValidUTF8(line[:readMaxLineLen], "") + "…"
@@ -128,7 +132,7 @@ func listDir(abs, shown string) (Result, error) {
 	}
 	var b strings.Builder
 	for i, e := range entries {
-		if i == readMaxDirItems {
+		if i == readMaxDirItems || b.Len() >= readBodyMax {
 			fmt.Fprintf(&b, "(%d more entries)\n", len(entries)-i)
 			break
 		}

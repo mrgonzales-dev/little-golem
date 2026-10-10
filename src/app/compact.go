@@ -82,9 +82,14 @@ func latestExchange(h []llama.ChatMessage) []llama.ChatMessage {
 }
 
 // ShouldAutoCompact reports whether the context has reached the
-// auto-compaction threshold.
+// auto-compaction threshold, either via the server's authoritative
+// TokenUsed or via the live char-size estimate (which catches huge tool
+// results the moment they land, before usage arrives).
 func ShouldAutoCompact(m *model.App) bool {
-	return !m.CompactFailed && len(m.History) > 0 && m.TokenUsed >= config.CompactAt
+	if m.CompactFailed || len(m.History) == 0 {
+		return false
+	}
+	return m.TokenUsed >= config.CompactAt || EstimatedTokens(m) >= config.CompactAt
 }
 
 // Compact summarizes the history in the background and replaces it with the

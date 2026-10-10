@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	refRows       = 6
-	refFileBytes  = 8000  // of one @reference put into the message
+	refRows      = 6
+	refFileBytes = 6000 // of one @reference put into the message; under the
+	// read body cap so this cut (with its marker) is the one that fires
 	refTotalBytes = 20000 // of all @references in one message
 	refLines      = 200
 )

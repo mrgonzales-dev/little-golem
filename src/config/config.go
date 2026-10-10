@@ -25,6 +25,30 @@ const (
 	// CompactAt is the context size in tokens at which the history is
 	// compacted automatically: 80% of the window.
 	CompactAt = CtxSize * 8 / 10
+
+	// ToolMaxChars caps a single tool result fed to the model, in chars.
+	// ~8000 chars ≈ 2k tokens, leaving room for multi-tool rounds inside
+	// the 16k window before auto-compaction fires.
+	ToolMaxChars = 8000
+
+	// ToolMaxLines caps lines in a single tool result.
+	ToolMaxLines = 400
+
+	// BashRawMaxBytes bounds raw bash capture in memory before truncation.
+	// The model only ever sees ToolMaxChars of it.
+	BashRawMaxBytes = 128 << 10
+
+	// GrepMaxResults clamps model-requested max_results.
+	GrepMaxResults = 200
+
+	// GlobMaxResults clamps model-requested max_results.
+	GlobMaxResults = 200
+
+	// GrepMaxContext clamps context lines before/after each match.
+	GrepMaxContext = 5
+
+	// GrepMaxLineChars truncates a single matched or context line.
+	GrepMaxLineChars = 500
 )
 
 // Model is one selectable GGUF. Name is the short id used by /models and the

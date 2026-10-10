@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"unsafe"
+
+	"little-golem/src/config"
 )
 
 // fffIndex wraps one fff instance rooted at a base directory. All C calls
@@ -118,12 +120,16 @@ func (f *fffIndex) Grep(a grepArgs) (string, error) {
 	if a.MaxResults != nil {
 		limit = *a.MaxResults
 	}
+	limit = min(limit, uint32(config.GrepMaxResults))
+	if limit == 0 {
+		limit = 1
+	}
 	before, after := uint32(0), uint32(0)
 	if a.Before != nil {
-		before = *a.Before
+		before = min(*a.Before, uint32(config.GrepMaxContext))
 	}
 	if a.After != nil {
-		after = *a.After
+		after = min(*a.After, uint32(config.GrepMaxContext))
 	}
 
 	if f == nil {
@@ -160,11 +166,12 @@ func (f *fffIndex) Grep(a grepArgs) (string, error) {
 	var b strings.Builder
 	items := gp.items
 	n := int(gp.count)
+	shown := 0
 	for i := 0; i < n; i++ {
 		m := (*C.struct_FffGrepMatch)(unsafe.Pointer(uintptr(unsafe.Pointer(items)) + uintptr(i)*unsafe.Sizeof(*items)))
 		path := C.GoString(m.relative_path)
 		line := uint64(m.line_number)
-		content := C.GoString(m.line_content)
+		content := ClipLine(C.GoString(m.line_content), config.GrepMaxLineChars)
 		if m.is_definition {
 			b.WriteString("def> ")
 		} else {
@@ -178,11 +185,16 @@ func (f *fffIndex) Grep(a grepArgs) (string, error) {
 		b.WriteString("\n")
 		for j := 0; j < int(m.context_before_count); j++ {
 			cb := C.fff_grep_match_get_context_before(m, C.uint32_t(j))
-			b.WriteString("      " + C.GoString(cb) + "\n")
+			b.WriteString("      " + ClipLine(C.GoString(cb), config.GrepMaxLineChars) + "\n")
 		}
 		for j := 0; j < int(m.context_after_count); j++ {
 			ca := C.fff_grep_match_get_context_after(m, C.uint32_t(j))
-			b.WriteString("      " + C.GoString(ca) + "\n")
+			b.WriteString("      " + ClipLine(C.GoString(ca), config.GrepMaxLineChars) + "\n")
+		}
+		shown++
+		if b.Len() >= config.ToolMaxChars-500 {
+			fmt.Fprintf(&b, "(showing first %d of %d matches; narrow the query or lower max_results)\n", shown, n)
+			break
 		}
 	}
 	if n == 0 {
@@ -344,6 +356,10 @@ func (t *GlobTool) Run(_ context.Context, raw json.RawMessage) (Result, error) {
 	}
 	if a.MaxResults == 0 {
 		a.MaxResults = 100
+	}
+	a.MaxResults = min(a.MaxResults, uint32(config.GlobMaxResults))
+	if a.MaxResults == 0 {
+		a.MaxResults = 1
 	}
 	out, err := fffShared.Glob(a.Pattern, a.MaxResults)
 	if err != nil {

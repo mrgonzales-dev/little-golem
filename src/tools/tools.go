@@ -21,6 +21,8 @@ type Call struct {
 type Result struct {
 	Content string `json:"content"`
 	IsError bool   `json:"is_error,omitempty"`
+	// Truncated marks budget-enforced cuts; the notice is inline in Content.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // Tool is a callable capability the model can invoke by name.
@@ -83,7 +85,9 @@ func (r *Registry) Definitions() []map[string]any {
 	return out
 }
 
-// Execute resolves and runs a call, normalizing errors into Result.
+// Execute resolves and runs a call, normalizing errors into Result. Every
+// result passes the character-budget gate so no tool can blow the context
+// window, no matter what it produced.
 func (r *Registry) Execute(ctx context.Context, c Call) Result {
 	t, ok := r.byName[c.Name]
 	if !ok {
@@ -91,8 +95,11 @@ func (r *Registry) Execute(ctx context.Context, c Call) Result {
 	}
 	res, err := t.Run(ctx, c.Arguments)
 	if err != nil {
-		return Result{Content: fmt.Sprintf("tool %s failed: %v", c.Name, err), IsError: true}
+		content, truncated := applyBudget(c.Name, fmt.Sprintf("tool %s failed: %v", c.Name, err))
+		return Result{Content: content, IsError: true, Truncated: truncated}
 	}
+	content, truncated := applyBudget(c.Name, res.Content)
+	res.Content, res.Truncated = content, res.Truncated || truncated
 	return res
 }
 
