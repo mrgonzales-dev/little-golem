@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -131,13 +132,20 @@ func handleRefKey(m *model.App, key string) bool {
 // spaces; bare @words end at whitespace as before. Paths resolve without
 // the workspace jail (absolute and ~/... allowed) since @ is explicit user
 // intent, but this stays read-only. It returns the message to send, the
-// references attached and those that could not be read.
-func expandRefs(text string) (string, []string, []string) {
+// references attached, those referenced-only (exist but not readable as
+// text, e.g. binary/xlsx — path is passed through so the model can use
+// bash/python to inspect), and those that could not be found.
+func expandRefs(text string) (string, []string, []string, []string) {
 	var b strings.Builder
 	b.WriteString(text)
-	var attached, missing []string
+	var attached, referenced, missing []string
 	seen := map[string]bool{}
 	budget := refTotalBytes
+	header := func() {
+		if len(attached) == 0 && len(referenced) == 0 {
+			b.WriteString("\n\nFiles and folders the user referenced with @ (already read for you):")
+		}
+	}
 	for _, mt := range refRe.FindAllStringSubmatch(text, -1) {
 		var ref, label string
 		switch {
@@ -157,12 +165,27 @@ func expandRefs(text string) (string, []string, []string) {
 		seen[ref] = true
 		res, abs, err := tools.ReadAny(ref, refLines)
 		if err != nil {
+			// Exists but not readable as text (binary, too large, ...)?
+			// Then refer-only: verify existence and pass the path through
+			// instead of reporting "not found".
+			if abs != "" {
+				if st, serr := os.Stat(abs); serr == nil && !st.IsDir() {
+					header()
+					referenced = append(referenced, label)
+					b.WriteString("\n\n<file path=\"" + ref + "\">\n(exists at " + abs + " (" + strconv.FormatInt(st.Size(), 10) + " bytes); content not attached: " + err.Error() + "; use bash/python to inspect, e.g. python3 with openpyxl for .xlsx)\n</file>")
+					continue
+				}
+				if st, serr := os.Stat(abs); serr == nil && st.IsDir() {
+					header()
+					referenced = append(referenced, label)
+					b.WriteString("\n\n<folder path=\"" + ref + "\">\n(exists at " + abs + "; listing not attached: " + err.Error() + "; use bash ls to inspect)\n</folder>")
+					continue
+				}
+			}
 			missing = append(missing, label)
 			continue
 		}
-		if len(attached) == 0 {
-			b.WriteString("\n\nFiles and folders the user referenced with @ (already read for you):")
-		}
+		header()
 		attached = append(attached, label)
 		body, room := res.Content, min(refFileBytes, budget)
 		switch {
@@ -178,5 +201,5 @@ func expandRefs(text string) (string, []string, []string) {
 		}
 		b.WriteString("\n\n<" + kind + " path=\"" + ref + "\">\n" + body + "\n</" + kind + ">")
 	}
-	return b.String(), attached, missing
+	return b.String(), attached, referenced, missing
 }

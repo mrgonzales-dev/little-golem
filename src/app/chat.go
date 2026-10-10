@@ -32,11 +32,14 @@ func Send(m *model.App) tea.Cmd {
 	m.Request = text
 	m.Seen, m.Repeats = nil, 0
 
-	sent, attached, missing := expandRefs(text)
+	sent, attached, referenced, missing := expandRefs(text)
 	m.History = append(m.History, llama.ChatMessage{Role: "user", Content: sent})
 	m.Entries = append(m.Entries, model.Entry{Kind: model.EntryUser, Content: text})
 	if len(attached) > 0 {
 		m.Entries = append(m.Entries, model.Entry{Kind: model.EntryNote, Content: "attached " + strings.Join(attached, " ")})
+	}
+	if len(referenced) > 0 {
+		m.Entries = append(m.Entries, model.Entry{Kind: model.EntryNote, Content: "referenced " + strings.Join(referenced, " ") + " (exists, content not attached; use bash/python to inspect)"})
 	}
 	if len(missing) > 0 {
 		m.Notice = "not found: " + strings.Join(missing, " ")
